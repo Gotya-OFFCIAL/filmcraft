@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FilmCraft Android shell (fork experiment): GameActivity loads libfilmcraft.so
+     (android_main in apps/filmcraft/src/lib.rs) and forwards its lifecycle and input
+     through the android-activity crate. minSdk 26: cpal's Oboe back end links AAudio. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ai.storyteller.filmcraft">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <application
+        android:label="FilmCraft"
+        android:hasCode="true"
+        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <activity
+            android:name="com.google.androidgamesdk.GameActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:resizeableActivity="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- The native library android_main lives in (GameActivity's System.loadLibrary). -->
+            <meta-data android:name="android.app.lib_name" android:value="filmcraft" />
+        </activity>
+    </application>
+</manifest>
