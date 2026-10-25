@@ -11,6 +11,7 @@
 
     <application
         android:label="FilmCraft"
+        android:icon="@mipmap/ic_launcher"
         android:hasCode="true"
         android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
         <activity

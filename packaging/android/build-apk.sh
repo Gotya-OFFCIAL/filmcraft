@@ -7,13 +7,15 @@
 #   - JDK 17 (java on PATH)
 #   - Android build-tools 35 (aapt2, d8, zipalign, apksigner) and platforms;android-35
 #     (android.jar) via sdkmanager — OR the maven-fetched equivalents noted inline.
-#   - The games-activity AAR 3.0.5 extracted (classes.jar supplies the Java GameActivity).
+#   - The games-activity AAR 4.4.0 extracted (the version android-activity 0.6.1 pairs
+#     with; classes.jar supplies the Java GameActivity, and the launcher icon comes
+#     from packaging/android/res).
 #
 # Usage: build-apk.sh [-o OUT.apk]
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-AAR_DIR="${AAR_DIR:-$REPO/../games-activity}"
+AAR_DIR="${AAR_DIR:-$REPO/../games-activity-4.4.0}"
 SO="${SO:-$REPO/target/aarch64-linux-android/debug/libfilmcraft.so}"
 BUILD="${BUILD_DIR:-$REPO/target/android-apk}"
 OUT="${2:-$BUILD/FilmCraft-debug.apk}"
@@ -25,9 +27,10 @@ PLATFORM_JAR="${PLATFORM_JAR:?set PLATFORM_JAR to platforms/android-35/android.j
 
 mkdir -p "$WORK/dex"
 
-# 1. The manifest, compiled and linked (no resources yet: the shell declares none).
+# 1. Compile the launcher-icon resources, then compile and link the manifest.
+"$BT/aapt2.exe" compile --dir "$REPO/packaging/android/res" -o "$WORK/res.zip"
 "$BT/aapt2.exe" link -o "$WORK/base.apk" -I "$PLATFORM_JAR" --manifest "$REPO/packaging/android/AndroidManifest.xml" \
-  --min-sdk-version 26 --target-sdk-version 35
+  --min-sdk-version 26 --target-sdk-version 35 --version-code 1 --version-name 0.12.0 "$WORK/res.zip"
 
 # 2. Java: the GameActivity classes from the AAR to dex.
 (cd "$WORK" && "$JDK/bin/jar" -xf "$AAR_DIR/classes.jar")
