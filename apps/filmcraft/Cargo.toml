@@ -7,6 +7,18 @@ license.workspace = true
 default-run = "filmcraft"
 build = "build.rs"
 
+# The app as a library: Android loads it as a cdylib (`android_main` in src/lib.rs); the
+# desktop binary is the thin wrapper in src/main.rs. The extra .dll desktop builds produce is
+# unused but harmless, and cargo has no target-specific crate-type.
+[lib]
+name = "filmcraft"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "filmcraft"
+path = "src/main.rs"
+
 # The workspace lints, except `unsafe_code` is `deny` instead of `forbid`: the Android entry
 # point exports the `android_main` symbol the activity looks up (`#[unsafe(no_mangle)]`, an
 # unsafe attribute) — the same shape ADR 0001 grants `filmcraft-platform` for its FFI. The one
