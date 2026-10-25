@@ -7,8 +7,20 @@ license.workspace = true
 default-run = "filmcraft"
 build = "build.rs"
 
-[lints]
-workspace = true
+# The workspace lints, except `unsafe_code` is `deny` instead of `forbid`: the Android entry
+# point exports the `android_main` symbol the activity looks up (`#[unsafe(no_mangle)]`, an
+# unsafe attribute) — the same shape ADR 0001 grants `filmcraft-platform` for its FFI. The one
+# `#[allow(unsafe_code)]` sits on `android_main` alone.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+needless_range_loop = "allow"
+type_complexity = "allow"
+undocumented_unsafe_blocks = "deny"
 
 [features]
 default = []
@@ -32,14 +44,25 @@ serde_json = { workspace = true }
 # Constant-time comparison of control-channel credentials.
 subtle = "2.6"
 log = { workspace = true }
-rfd = { workspace = true }
 cpal = "0.16"
-# Files and images on the system clipboard for Paste (#611); egui already uses it for text.
-arboard = "3"
 chrono = { workspace = true, features = ["clock"] }
 sys-locale = "0.3"
 # Help menu / About / Discord links in the system browser (MIT; as PhotoCraft).
 open = "5"
+
+# Files and images on the system clipboard for Paste (#611); egui already uses it for text.
+# arboard has no Android backend, so Paste from the system clipboard there waits for a
+# ClipboardManager bridge (the text clipboard egui handles still works).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = "3"
+rfd = { workspace = true }
+
+# Same UI stack as the desktop, with eframe's Android activity back end. `accesskit` is only
+# compatible with the game-activity back end (eframe rejects the native-activity pairing).
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "android-game-activity"] }
+# The AndroidApp handed to android_main (same winit as eframe).
+winit = { version = "0.30", default-features = false, features = ["android-game-activity"] }
 
 [dev-dependencies]
 glob = "0.3"
