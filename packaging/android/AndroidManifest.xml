@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FilmCraft Android shell (fork experiment): GameActivity loads libfilmcraft.so
-     (android_main in apps/filmcraft/src/lib.rs) and forwards its lifecycle and input
-     through the android-activity crate. minSdk 26: cpal's Oboe back end links AAudio. -->
+<!-- FilmCraft Android shell (fork experiment): NativeActivity loads libfilmcraft.so
+     (ANativeActivity_onCreate from android-activity's native-activity glue, which runs
+     android_main in apps/filmcraft/src/lib.rs) and forwards its lifecycle and input
+     through the android-activity crate. minSdk 26: cpal's Oboe back end links AAudio.
+     Phase 1 is Gradle-free: NativeActivity ships with the OS, so the APK needs no app-side
+     Java at all. GameActivity would drag in the androidx.appcompat closure (dozens of AARs),
+     which needs proper Gradle packaging — revisit it with the IME work (docs/mobile-ui.md). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="ai.storyteller.filmcraft">
 
@@ -12,10 +16,10 @@
     <application
         android:label="FilmCraft"
         android:icon="@mipmap/ic_launcher"
-        android:hasCode="true"
+        android:hasCode="false"
         android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
         <activity
-            android:name="com.google.androidgamesdk.GameActivity"
+            android:name="android.app.NativeActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
             android:resizeableActivity="true">
@@ -23,7 +27,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- The native library android_main lives in (GameActivity's System.loadLibrary). -->
+            <!-- The native library NativeActivity dlopen()s (its ANativeActivity_onCreate). -->
             <meta-data android:name="android.app.lib_name" android:value="filmcraft" />
         </activity>
     </application>

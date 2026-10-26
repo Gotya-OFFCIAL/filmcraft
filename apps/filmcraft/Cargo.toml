@@ -51,7 +51,9 @@ filmcraft-gpu = { workspace = true }
 filmcraft-ui-egui = { workspace = true }
 filmcraft-platform = { workspace = true }
 egui = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+# `accesskit` moved to the non-Android target section below: eframe compile_error!s on the
+# accesskit + android-native-activity pairing, and a feature enabled on ANY edge of this
+# dependency is unified into every target's build of eframe.
 serde_json = { workspace = true }
 # Constant-time comparison of control-channel credentials.
 subtle = "2.6"
@@ -68,13 +70,17 @@ open = "5"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = "3"
 rfd = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
 
-# Same UI stack as the desktop, with eframe's Android activity back end. `accesskit` is only
-# compatible with the game-activity back end (eframe rejects the native-activity pairing).
+# Phase 1 of the port runs on NativeActivity: it ships with the OS, so a Gradle-free APK needs
+# no app-side Java at all. GameActivity would be the better shell (IME support, accesskit),
+# but its Java extends androidx AppCompatActivity — packaging that closure without Gradle is
+# a follow-up (see docs/mobile-ui.md). eframe rejects accesskit + native-activity, so the
+# accesskit feature stays on the desktop edge only.
 [target.'cfg(target_os = "android")'.dependencies]
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "android-game-activity"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
 # The AndroidApp handed to android_main (same winit as eframe).
-winit = { version = "0.30", default-features = false, features = ["android-game-activity"] }
+winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
 
 [dev-dependencies]
 glob = "0.3"

@@ -27,7 +27,9 @@ filmcraft-export = { workspace = true }
 filmcraft-gpu = { workspace = true }
 filmcraft-scopes = { workspace = true }
 egui = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+# eframe is split per target below: the Android port runs on eframe's native-activity back
+# end, and eframe compile_error!s when `accesskit` (enabled here) unifies into its Android
+# build. Desktop/web keep the exact same features as before, accesskit included.
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -44,6 +46,11 @@ rustix = { version = "1", default-features = false, features = ["std", "time"] }
 # the same clocks on Windows (GetThreadTimes / GetProcessTimes behind a safe API; MIT OR Apache-2.0)
 [target.'cfg(windows)'.dependencies]
 cpu-time = "1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
 
 [dev-dependencies]
 pollster = "0.4"
