@@ -99,6 +99,12 @@ impl DirectorySource {
             if let Some(l) = std::env::var_os("LOCALAPPDATA") {
                 dirs.push(PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
             }
+        } else if cfg!(target_os = "android") {
+            // Android keeps its system fonts (Roboto, and the Noto CJK collections covering
+            // Chinese, Japanese and Korean) in one world-readable folder. The unix branch below
+            // scans Linux paths that do not exist here, so without this the Language menu's CJK
+            // and Hangul names draw as tofu boxes.
+            dirs.push(PathBuf::from("/system/fonts"));
         } else if cfg!(unix) && !cfg!(target_arch = "wasm32") {
             dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from));
             if let Some(h) = &home {
