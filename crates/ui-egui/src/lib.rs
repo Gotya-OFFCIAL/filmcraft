@@ -49,6 +49,7 @@ pub mod i18n;
 pub mod icons;
 pub mod links;
 pub mod menus;
+pub mod mobile;
 pub mod native_dialogs;
 pub mod panels;
 pub mod perf;
@@ -396,6 +397,13 @@ pub struct FilmcraftApp {
     applied_prefs: Option<filmcraft_engine::autosave::Preferences>,
     /// Settings ▸ Appearance ▸ UI Scale last applied, with the system scale it was applied for.
     applied_ui_scale: Option<(Option<f32>, f32)>,
+    /// Which chrome this frame draws: the desktop docking layout or one of the touch
+    /// presentations (docs/mobile-ui.md). Recomputed every frame by `mobile::detect`,
+    /// never persisted - rotating the device restacks live.
+    pub presentation: state::Presentation,
+    /// The touch metrics last applied, with the theme they were applied for: the
+    /// style switch runs only when the presentation or the theme changes.
+    applied_touch_style: Option<(state::Presentation, theme::ThemeKind)>,
     workspace_restored: bool,
     /// Window ▸ Workspaces: saved layouts ([`dock::WORKSPACES_FILE`] in the data directory).
     pub workspaces: dock::WorkspacePrefs,
@@ -617,6 +625,8 @@ impl FilmcraftApp {
             watched_render: None,
             applied_prefs: None,
             applied_ui_scale: None,
+            presentation: state::Presentation::default(),
+            applied_touch_style: None,
             workspace_restored: false,
             workspaces,
             menu_workspaces: Default::default(),
@@ -1881,14 +1891,22 @@ impl FilmcraftApp {
         let t = self.tokens;
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, t.app_bg);
-        let header_h = if self.ui.show_header { 38.0 } else { 0.0 };
+        // The touch chrome replaces the desktop header and docking on phones and
+        // tablets (docs/mobile-ui.md); everything else draws exactly as before.
+        self.presentation = mobile::detect(cfg!(target_os = "android"), full.size());
+        mobile::apply_style(&ctx, &t, &mut self.applied_touch_style, self.presentation);
+        let header_h = if self.ui.show_header { if self.presentation.is_mobile() { 52.0 } else { 38.0 } } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
         if self.ui.show_header {
-            header::show(self, ui, header);
+            match self.presentation {
+                state::Presentation::Desktop => header::show(self, ui, header),
+                _ => mobile::top_bar(self, ui, header),
+            }
         }
         let status_h = if self.ui.show_status_bar { 20.0 } else { 0.0 };
         let body = egui::Rect::from_min_max(egui::pos2(full.min.x + 1.0, header.max.y + 1.0), egui::pos2(full.max.x - 1.0, full.max.y - status_h - 2.0));
         match self.ui.mode {
+            state::Mode::Edit if self.presentation.is_mobile() => mobile::edit(self, ui, body),
             state::Mode::Edit => self.dock_area(ui, body),
             state::Mode::Import => panels::import_mode::show(self, ui, body),
             state::Mode::Export => panels::export_mode::show(self, ui, body),
