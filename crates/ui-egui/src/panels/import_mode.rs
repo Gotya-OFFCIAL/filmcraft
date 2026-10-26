@@ -74,6 +74,85 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
+/// The touch Import (docs/mobile-ui.md): the desktop's four side-by-side cards become
+/// one scrollable column of full-width rows - a phone cannot fit a 260 px card times
+/// four, and a finger does not hover to discover what a card is. Same commands, same
+/// automation ids as the desktop cards.
+pub fn show_mobile(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let t = app.tokens;
+    ui.painter().rect_filled(rect, t.radius, t.panel_bg);
+    let ctx = ui.ctx().clone();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(10.0, 8.0))).id_salt("import-mobile"));
+    egui::ScrollArea::vertical().id_salt("import-mobile-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
+        ui.label(egui::RichText::new(tl!("Import")).strong().size(20.0));
+        ui.label(
+            egui::RichText::new(tl!("Add media to your project. Drop files anywhere in the window, or choose a source below.")).color(t.text_dim).size(12.5),
+        );
+        ui.add_space(8.0);
+        let cards = [
+            (tl!("Browse files…"), "file.import", tl!("Movies, audio and stills from disk"), crate::icons::Icon::Folder),
+            (tl!("Demo footage"), "file.importDemoFootage", tl!("Six procedural 1080p clips with sound"), crate::icons::Icon::Film),
+            (tl!("Demo project"), "file.openDemoProject", tl!("A cut sequence with transitions, effects and music"), crate::icons::Icon::Sequence),
+            (tl!("Bars and Tone"), "file.newBarsAndTone", tl!("SMPTE HD bars with 1 kHz reference tone"), crate::icons::Icon::Grid),
+        ];
+        for (title, cmd, sub, icon) in cards {
+            let r = ui
+                .add_sized(
+                    egui::vec2(ui.available_width(), 64.0),
+                    egui::Button::new(egui::RichText::new(format!("{title}\n{sub}")).size(13.0).color(t.text))
+                        .fill(t.tl_header_bg)
+                        .corner_radius(8.0)
+                        .min_size(egui::vec2(0.0, 64.0)),
+                )
+                .on_hover_text(sub);
+            app.auto.add(&format!("import.{cmd}"), r.rect, title);
+            crate::icons::paint(
+                ui.painter(),
+                Rect::from_center_size(pos2(r.rect.min.x + 30.0, r.rect.center().y), vec2(24.0, 24.0)),
+                icon,
+                Color32::from_rgb(140, 150, 255),
+            );
+            if r.clicked() {
+                let _ = crate::menus::invoke(app, &ctx, cmd, json!({}));
+                app.ui.mode = crate::state::Mode::Edit;
+            }
+            ui.add_space(6.0);
+        }
+        let paths: Vec<String> = app.session.prefs.general.recent_projects.iter().take(RECENT_ROWS).cloned().collect();
+        if !paths.is_empty() {
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(tl!("Recent")).strong().size(15.0));
+            for (i, path) in paths.iter().enumerate() {
+                let name = crate::menus::recent_name(path);
+                let r = ui.add_sized(
+                    egui::vec2(ui.available_width(), 44.0),
+                    egui::Button::new(egui::RichText::new(&name).size(13.0).color(t.text)).fill(Color32::TRANSPARENT).corner_radius(6.0),
+                );
+                app.auto.add(&format!("import.recent.{i}"), r.rect, &name);
+                if r.clicked() {
+                    if crate::menus::invoke(app, &ctx, "file.open", json!({"path": path})).is_ok() {
+                        app.ui.mode = crate::state::Mode::Edit;
+                    }
+                }
+            }
+        }
+        ui.add_space(12.0);
+        ui.label(egui::RichText::new(tl!("Community")).strong().size(15.0));
+        for (id, label, url) in crate::links::ALL.iter().take(4) {
+            let label = if *id == "help.discord" { tl!("Join us on Discord") } else { crate::i18n::t(label) };
+            let r = ui.add_sized(
+                egui::vec2(ui.available_width(), 44.0),
+                egui::Button::new(egui::RichText::new(label).size(13.0)).fill(t.tl_header_bg).corner_radius(8.0),
+            );
+            app.auto.add(&format!("import.link.{}", id.trim_start_matches("help.")), r.rect, label);
+            if r.clicked() {
+                crate::links::open(app, &ctx, url);
+            }
+            ui.add_space(4.0);
+        }
+    });
+}
+
 /// Recent projects listed on Home, as in File ▸ Open Recent.
 const RECENT_ROWS: usize = 6;
 const RECENT_ROW_H: f32 = 28.0;

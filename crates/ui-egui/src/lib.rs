@@ -1908,7 +1908,9 @@ impl FilmcraftApp {
         match self.ui.mode {
             state::Mode::Edit if self.presentation.is_mobile() => mobile::edit(self, ui, body),
             state::Mode::Edit => self.dock_area(ui, body),
+            state::Mode::Import if self.presentation.is_mobile() => panels::import_mode::show_mobile(self, ui, body),
             state::Mode::Import => panels::import_mode::show(self, ui, body),
+            state::Mode::Export if self.presentation.is_mobile() => panels::export_mode::show_mobile(self, ui, body),
             state::Mode::Export => panels::export_mode::show(self, ui, body),
         }
         // the Timeline has had its chance to place a file drop this frame; anything left stays a bin import

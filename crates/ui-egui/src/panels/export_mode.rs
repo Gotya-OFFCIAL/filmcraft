@@ -59,6 +59,9 @@ pub struct ExportUi {
     pub quick_open: bool,
     pub quick_path: String,
     pub quick_preset: String,
+    /// The touch chrome's column tab: "settings" | "output" | "queue" (docs/mobile-ui.md;
+    /// the desktop shows all three columns at once and ignores this).
+    pub mobile_tab: String,
 }
 
 impl Default for ExportUi {
@@ -78,6 +81,7 @@ impl Default for ExportUi {
             quick_open: false,
             quick_path: String::new(),
             quick_preset: String::new(),
+            mobile_tab: "settings".into(),
         }
     }
 }
@@ -168,14 +172,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     let Some(seq_id) = app.session.state.active_sequence else {
         crate::dock::placeholder(ui, mid, &t, tl!("Open a sequence to export"));
-        queue_column(app, ui, left);
+        queue_column(app, ui, left, true);
         return;
     };
     sync_sequence(app);
     let before = settings_json(&app.ui.export.settings);
-    queue_column(app, ui, left);
+    queue_column(app, ui, left, true);
     settings_column(app, ui, mid);
-    preview_column(app, ui, right, seq_id);
+    preview_column(app, ui, right, seq_id, true);
     // editing any setting turns the preset into "Custom"
     if settings_json(&app.ui.export.settings) != before
         && app.ui.export.preset != CUSTOM
@@ -193,7 +197,99 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 // left: destinations + queue
 // ---------------------------------------------------------------------------------------------
 
-fn queue_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+/// The touch Export (docs/mobile-ui.md): one column at a time under tabs, with the
+/// queue's Start / Stop and the export's Send / Export as a persistent bottom bar -
+/// the three desktop columns do not fit a phone, and their fixed 300 px left rail
+/// plus 360-640 px right rail overflowed at tablet widths.
+pub fn show_mobile(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let t = app.tokens;
+    ui.painter().rect_filled(rect, t.radius, t.panel_bg);
+    let Some(seq_id) = app.session.state.active_sequence else {
+        crate::dock::placeholder(ui, rect, &t, tl!("Open a sequence to export"));
+        return;
+    };
+    sync_sequence(app);
+    let before = settings_json(&app.ui.export.settings);
+    let bar_h = 48.0;
+    let tabs = Rect::from_min_size(rect.min, vec2(rect.width(), bar_h));
+    let foot = Rect::from_min_max(pos2(rect.min.x, rect.max.y - bar_h), rect.max);
+    let body = Rect::from_min_max(pos2(rect.min.x + 2.0, tabs.max.y + 2.0), pos2(rect.max.x - 2.0, foot.min.y - 2.0));
+    // Tabs: the settings, the output (preview + summary), the queue.
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs).id_salt("export-mobile-tabs"));
+    child.horizontal_centered(|ui| {
+        for (key, label) in [("settings", tl!("Media File")), ("output", tl!("Summary")), ("queue", tl!("Queue"))] {
+            if ui.selectable_label(app.ui.export.mobile_tab == key, egui::RichText::new(label).size(13.5)).clicked() {
+                app.ui.export.mobile_tab = key.into();
+            }
+        }
+    });
+    match app.ui.export.mobile_tab.as_str() {
+        "queue" => {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt("export-mobile-queue"));
+            queue_column(app, &mut child, body, false);
+        }
+        "output" => {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt("export-mobile-output"));
+            preview_column(app, &mut child, body, seq_id, false);
+        }
+        _ => {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt("export-mobile-settings"));
+            settings_column(app, &mut child, body);
+        }
+    }
+    // The persistent action bar: the queue's own buttons while the queue tab is up,
+    // the export buttons otherwise. Same handlers as the desktop columns.
+    ui.painter().rect_filled(foot, 0.0, t.header_bg);
+    let mut foot_ui = ui.new_child(egui::UiBuilder::new().max_rect(foot.shrink2(vec2(8.0, 6.0))).id_salt("export-mobile-foot"));
+    if app.ui.export.mobile_tab == "queue" {
+        foot_ui.horizontal_centered(|ui| queue_footer(app, ui));
+    } else {
+        // export_buttons places itself bottom-right of the rect it is given: the bar
+        // itself, in the parent's coordinates, exactly where the desktop draws them.
+        let mut reg = Reg::default();
+        export_buttons(app, ui, &mut reg, foot);
+        reg.flush(app);
+    }
+    // editing any setting turns the preset into "Custom" (the desktop's rule)
+    if settings_json(&app.ui.export.settings) != before
+        && app.ui.export.preset != CUSTOM
+        && app.session.export_presets.find(&app.ui.export.preset).is_none_or(|p| settings_json(&p.settings) != settings_json(&app.ui.export.settings))
+    {
+        app.ui.export.preset = CUSTOM.into();
+    }
+    preset_manager(app, ui.ctx());
+}
+
+/// The queue footer's three buttons, lifted out of the desktop column's footer for
+/// the touch action bar (the desktop keeps drawing its own).
+fn queue_footer(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
+    let items: Vec<Value> = app.session.execute("export.queue.list", json!({})).ok().and_then(|v| v["items"].as_array().cloned()).unwrap_or_default();
+    let running = app.session.export_queue.running;
+    let has_ready = items.iter().any(|i| i["status"] == "ready");
+    let mut reg = Reg::default();
+    let r = ui.add_enabled(!running && has_ready, egui::Button::new(tl!("Start Queue")));
+    reg.add("export.queue.start", r.rect, "Start Queue");
+    if r.clicked() {
+        let _ = app.session.execute("export.queue.start", json!({}));
+    }
+    let r = ui.add_enabled(running, egui::Button::new(tl!("Stop")));
+    reg.add("export.queue.stop", r.rect, "Stop");
+    if r.clicked() {
+        let _ = app.session.execute("export.queue.stop", json!({}));
+    }
+    let r =
+        ui.add_enabled(items.iter().any(|i| matches!(i["status"].as_str(), Some("done" | "failed" | "cancelled"))), egui::Button::new(tl!("Clear Finished")));
+    reg.add("export.queue.clear", r.rect, "Clear Finished");
+    if r.clicked() {
+        let _ = app.session.execute("export.queue.clear", json!({}));
+    }
+    reg.flush(app);
+}
+
+/// The Destinations + Queue column. `in_column` draws the Start/Stop/Clear footer
+/// inside the column (the desktop); the touch chrome leaves `false` and draws the
+/// same buttons in its persistent action bar.
+fn queue_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, in_column: bool) {
     let t = app.tokens;
     let mut reg = Reg::default();
     let p = ui.painter();
@@ -205,7 +301,7 @@ fn queue_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let qtop = mf.max.y + 18.0;
     let n = app.session.export_queue.items.len();
     p.text(pos2(rect.min.x + 14.0, qtop), Align2::LEFT_CENTER, tlf!("Queue ({n})", n), Tokens::semibold(13.0), t.text);
-    let body = Rect::from_min_max(pos2(rect.min.x + 8.0, qtop + 14.0), pos2(rect.max.x - 8.0, rect.max.y - 40.0));
+    let body = Rect::from_min_max(pos2(rect.min.x + 8.0, qtop + 14.0), pos2(rect.max.x - 8.0, rect.max.y - if in_column { 40.0 } else { 8.0 }));
     let items: Vec<Value> = app.session.execute("export.queue.list", json!({})).ok().and_then(|v| v["items"].as_array().cloned()).unwrap_or_default();
     let mut action: Option<(&'static str, Value)> = None;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt("export-queue"));
@@ -264,26 +360,28 @@ fn queue_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             reg.add(format!("export.queue.item.{id}"), r.rect, status);
         }
     });
-    // footer
-    let running = app.session.export_queue.running;
-    let has_ready = items.iter().any(|i| i["status"] == "ready");
-    let foot = Rect::from_min_max(pos2(rect.min.x + 8.0, rect.max.y - 34.0), pos2(rect.max.x - 8.0, rect.max.y - 6.0));
-    let mut f = ui.new_child(egui::UiBuilder::new().max_rect(foot).layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let r = f.add_enabled(!running && has_ready, egui::Button::new(tl!("Start Queue")));
-    reg.add("export.queue.start", r.rect, "Start Queue");
-    if r.clicked() {
-        action = Some(("export.queue.start", json!({})));
-    }
-    let r = f.add_enabled(running, egui::Button::new(tl!("Stop")));
-    reg.add("export.queue.stop", r.rect, "Stop");
-    if r.clicked() {
-        action = Some(("export.queue.stop", json!({})));
-    }
-    let r =
-        f.add_enabled(items.iter().any(|i| matches!(i["status"].as_str(), Some("done" | "failed" | "cancelled"))), egui::Button::new(tl!("Clear Finished")));
-    reg.add("export.queue.clear", r.rect, "Clear Finished");
-    if r.clicked() {
-        action = Some(("export.queue.clear", json!({})));
+    // footer (the desktop column's own; the touch chrome draws these in its action bar)
+    if in_column {
+        let running = app.session.export_queue.running;
+        let has_ready = items.iter().any(|i| i["status"] == "ready");
+        let foot = Rect::from_min_max(pos2(rect.min.x + 8.0, rect.max.y - 34.0), pos2(rect.max.x - 8.0, rect.max.y - 6.0));
+        let mut f = ui.new_child(egui::UiBuilder::new().max_rect(foot).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        let r = f.add_enabled(!running && has_ready, egui::Button::new(tl!("Start Queue")));
+        reg.add("export.queue.start", r.rect, "Start Queue");
+        if r.clicked() {
+            action = Some(("export.queue.start", json!({})));
+        }
+        let r = f.add_enabled(running, egui::Button::new(tl!("Stop")));
+        reg.add("export.queue.stop", r.rect, "Stop");
+        if r.clicked() {
+            action = Some(("export.queue.stop", json!({})));
+        }
+        let r = f
+            .add_enabled(items.iter().any(|i| matches!(i["status"].as_str(), Some("done" | "failed" | "cancelled"))), egui::Button::new(tl!("Clear Finished")));
+        reg.add("export.queue.clear", r.rect, "Clear Finished");
+        if r.clicked() {
+            action = Some(("export.queue.clear", json!({})));
+        }
     }
     reg.flush(app);
     if let Some((cmd, p)) = action
@@ -1080,7 +1178,11 @@ fn effects_section(ui: &mut egui::Ui, reg: &mut Reg, s: &mut ExportSettings, t: 
 
 pub(crate) const RANGES: [(&str, &str); 4] = [("entire", "Entire Source"), ("inOut", "Source In/Out"), ("workArea", "Work Area"), ("custom", "Custom")];
 
-fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id: filmcraft_engine::project::ItemId) {
+/// The Output column: preview, range/scaling, summary, and (on the desktop) the
+/// Send to Queue / Export buttons at its bottom. `in_column` false lets the scroll
+/// area reach the rect's bottom - the touch chrome draws the buttons in its action
+/// bar instead.
+fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id: filmcraft_engine::project::ItemId, in_column: bool) {
     let t = app.tokens;
     let mut reg = Reg::default();
     let Some(q) = app.session.active_sequence().cloned() else { return };
@@ -1115,7 +1217,10 @@ fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id:
     // range + scaling
     let mut child = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(Rect::from_min_max(pos2(rect.min.x + 14.0, pv_area.max.y + 8.0), pos2(rect.max.x - 14.0, rect.max.y - 50.0)))
+            .max_rect(Rect::from_min_max(
+                pos2(rect.min.x + 14.0, pv_area.max.y + 8.0),
+                pos2(rect.max.x - 14.0, rect.max.y - if in_column { 50.0 } else { 8.0 }),
+            ))
             .id_salt("export-right"),
     );
     let ex = &mut app.ui.export;
@@ -1192,7 +1297,18 @@ fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id:
     child.add_space(4.0);
     let est = child.label(egui::RichText::new(tlf!("Estimated file size: {size}", size = format_bytes(sum.estimated_bytes))).color(t.text_dim));
     reg.add("export.estimate", est.rect, sum.estimated_size.clone());
-    // buttons
+    // buttons (the desktop column's own; the touch chrome draws these in its action bar)
+    if in_column {
+        export_buttons(app, ui, &mut reg, rect);
+    }
+    reg.flush(app);
+}
+
+/// The Send to Queue / Export pair, bottom-right of `rect`. Shared by the desktop's
+/// Output column and the touch chrome's persistent footer; both flush their own
+/// [`Reg`], so the automation ids stay identical wherever the buttons draw.
+fn export_buttons(app: &mut FilmcraftApp, ui: &mut egui::Ui, reg: &mut Reg, rect: Rect) {
+    let t = app.tokens;
     let go = Rect::from_min_size(pos2(rect.max.x - 120.0, rect.max.y - 44.0), vec2(104.0, 30.0));
     let queue = Rect::from_min_size(pos2(go.min.x - 132.0, go.min.y), vec2(122.0, 30.0));
     let qresp = ui.interact(queue, egui::Id::new("export-queue-send"), Sense::click());
@@ -1203,7 +1319,6 @@ fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id:
     ui.painter().rect_filled(go, 15.0, if resp.hovered() { t.accent_hover } else { t.accent });
     ui.painter().text(go.center(), Align2::CENTER_CENTER, tl!("Export"), Tokens::semibold(13.0), Color32::WHITE);
     reg.add("export.button", go, "Export");
-    reg.flush(app);
     if resp.clicked() {
         let r = app.session.execute("file.exportMedia", export_params(app));
         match r {
