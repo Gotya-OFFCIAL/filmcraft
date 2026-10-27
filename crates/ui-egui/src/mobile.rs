@@ -51,7 +51,9 @@ pub(crate) fn detect(android: bool, content: Vec2) -> Presentation {
     if !android {
         return Presentation::Desktop;
     }
-    if content.x.min(content.y) < PHONE_SHORT_EDGE && is_portrait(content) { Presentation::MobilePortrait } else { Presentation::MobileLandscape }
+    // `<=`: a 2K tablet at 320 dpi is exactly 720 dp on its short edge, and held
+    // upright that is the phone the portrait stack is for.
+    if content.x.min(content.y) <= PHONE_SHORT_EDGE && is_portrait(content) { Presentation::MobilePortrait } else { Presentation::MobileLandscape }
 }
 
 /// `FILMCRAFT_PRESENTATION=desktop|landscape|portrait`, for driving the mobile shells
