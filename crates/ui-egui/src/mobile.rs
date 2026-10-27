@@ -290,16 +290,62 @@ pub(crate) fn top_bar(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
             if ui.button(egui::RichText::new("\u{22ef}").size(18.0)).clicked() {
                 open = !open;
             }
-            let _ = bottom_sheet(ui.ctx(), &t, sheet_id, &mut open, tl!("View"), |ui| {
-                // P2 fills this sheet: theme, layout toggles, the panels the
-                // touch chrome hides behind it.
-                let _ = ui;
+            let items = crate::menus::menu_items(app);
+            let can = |id: &str| items.iter().find(|it| it.id == id).is_some_and(|it| it.enabled);
+            let mut picked: Option<(&'static str, serde_json::Value)> = None;
+            let _ = bottom_sheet(ui.ctx(), &t, sheet_id, &mut open, tl!("Menu"), |ui| {
+                // The file work the desktop menu bar owned - the touch header
+                // replaced that bar, so those commands live here now.
+                for (icon, label, id, params) in menu_commands() {
+                    if command_row(ui, &t, &can, icon, label, id) {
+                        picked = Some((id, params));
+                    }
+                }
             });
             ui.ctx().data_mut(|d| d.insert_temp(sheet_id, open));
+            if let Some((id, params)) = picked {
+                let _ = crate::menus::invoke(app, ui.ctx(), id, params);
+            }
             let name = app.session.project.name.clone();
             ui.label(egui::RichText::new(name).color(t.text_dim).size(13.0));
         });
     });
+}
+
+/// One command row of a touch sheet: icon, translated label, greyed when the engine
+/// would refuse the command (the same enabled table the desktop menus read).
+fn command_row(ui: &mut Ui, t: &Tokens, can: &dyn Fn(&str) -> bool, icon: crate::icons::Icon, label: &str, id: &'static str) -> bool {
+    let row = ui.add_enabled(
+        can(id),
+        egui::Button::new(egui::RichText::new(format!("   {label}")).size(14.0))
+            .fill(Color32::TRANSPARENT)
+            .min_size(Vec2::new(ui.available_width(), MIN_TOUCH_DP)),
+    );
+    crate::icons::paint(ui.painter(), Rect::from_center_size(Pos2::new(row.rect.min.x + 22.0, row.rect.center().y), Vec2::splat(18.0)), icon, t.text);
+    row.clicked()
+}
+
+/// The commands the ⋯ sheet lists: the file work the desktop menu bar owned (the
+/// touch header replaced that bar, so they need a home), the settings entry, and
+/// the edits the portrait dock has no slot for. Shared by both sheets so the two
+/// never drift.
+fn menu_commands() -> Vec<(crate::icons::Icon, &'static str, &'static str, serde_json::Value)> {
+    let j = serde_json::json!({});
+    vec![
+        (crate::icons::Icon::Drive, tl!("Save"), "file.save", j.clone()),
+        (crate::icons::Icon::NewItem, tl!("Save As\u{2026}"), "file.saveAs", j.clone()),
+        (crate::icons::Icon::Folder, tl!("Import\u{2026}"), "file.import", j.clone()),
+        (crate::icons::Icon::Sequence, tl!("New Sequence"), "file.newSequence", j.clone()),
+        (crate::icons::Icon::Lift, tl!("Lift"), "sequence.lift", j.clone()),
+        (crate::icons::Icon::Extract, tl!("Extract"), "sequence.extract", j.clone()),
+        (crate::icons::Icon::MarkIn, tl!("Mark Clip"), "markers.markClip", j.clone()),
+        (crate::icons::Icon::MarkOut, tl!("Mark Selection"), "markers.markSelection", j.clone()),
+        (crate::icons::Icon::Marker, tl!("Go to In"), "markers.goToIn", serde_json::json!({"target": "program"})),
+        (crate::icons::Icon::Link, tl!("Linked Selection"), "sequence.linkedSelection", j.clone()),
+        (crate::icons::Icon::Sequence, tl!("Copy"), "edit.copy", j.clone()),
+        (crate::icons::Icon::Plus, tl!("Paste"), "edit.paste", j.clone()),
+        (crate::icons::Icon::Gear, tl!("Preferences\u{2026}"), "app.settings.general", j),
+    ]
 }
 
 /// The portrait Edit chrome: the Program monitor over the Timeline over the tool
@@ -400,26 +446,11 @@ fn tool_dock(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
         }
     });
 
-    // The overflow sheet: the edits that do not earn a dock slot.
-    let picked = bottom_sheet(&ctx, &t, sheet_id, &mut open, tl!("Edit"), |ui| -> Option<&'static str> {
-        for (icon, label, id) in [
-            (crate::icons::Icon::Lift, tl!("Lift"), "sequence.lift"),
-            (crate::icons::Icon::Extract, tl!("Extract"), "sequence.extract"),
-            (crate::icons::Icon::MarkIn, tl!("Mark Clip"), "markers.markClip"),
-            (crate::icons::Icon::MarkOut, tl!("Mark Selection"), "markers.markSelection"),
-            (crate::icons::Icon::Marker, tl!("Go to In"), "markers.goToIn"),
-            (crate::icons::Icon::Link, tl!("Linked Selection"), "sequence.linkedSelection"),
-            (crate::icons::Icon::Sequence, tl!("Copy"), "edit.copy"),
-            (crate::icons::Icon::Plus, tl!("Paste"), "edit.paste"),
-        ] {
-            let row = ui.add_enabled(
-                can(id),
-                egui::Button::new(egui::RichText::new(format!("   {label}")).size(14.0))
-                    .fill(Color32::TRANSPARENT)
-                    .min_size(Vec2::new(ui.available_width(), MIN_TOUCH_DP)),
-            );
-            crate::icons::paint(ui.painter(), Rect::from_center_size(Pos2::new(row.rect.min.x + 22.0, row.rect.center().y), Vec2::splat(18.0)), icon, t.text);
-            if row.clicked() {
+    // The overflow sheet: the same command list the ⋯ header sheet shows, so the
+    // two never drift.
+    let picked = bottom_sheet(&ctx, &t, sheet_id, &mut open, tl!("Menu"), |ui| -> Option<&'static str> {
+        for (icon, label, id, _) in menu_commands() {
+            if command_row(ui, &t, &can, icon, label, id) {
                 return Some(id);
             }
         }
@@ -428,7 +459,7 @@ fn tool_dock(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
     ui.ctx().data_mut(|d| d.insert_temp(sheet_id, open));
     // The sheet wraps its body's Option in its own open/closed Option.
     if let Some(id) = picked.flatten().or(clicked) {
-        let params = if id == "markers.goToIn" { serde_json::json!({"target": "program"}) } else { serde_json::json!({}) };
+        let params = menu_commands().into_iter().find(|(_, _, cmd, _)| *cmd == id).map(|(_, _, _, p)| p).unwrap_or_else(|| serde_json::json!({}));
         let _ = crate::menus::invoke(app, &ctx, id, params);
     }
 }
