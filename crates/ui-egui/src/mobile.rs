@@ -103,14 +103,12 @@ pub(crate) fn apply_style(ctx: &egui::Context, t: &Tokens, applied: &mut Option<
 pub(crate) struct LongPress;
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct LpState {
-    anchor: Pos2,
-    started: f64,
-    fired: bool,
+pub struct LpState {
+    pub anchor: Pos2,
+    pub started: f64,
+    pub fired: bool,
 }
 
-#[allow(dead_code)]
 impl LongPress {
     pub(crate) fn fire(ctx: &egui::Context, id: Id, rect: Rect) -> Option<Pos2> {
         let now = ctx.input(|i| i.time);
@@ -137,9 +135,25 @@ impl LongPress {
         None
     }
 
-    pub(crate) fn swallow(ctx: &egui::Context, id: Id) -> bool {
-        ctx.data(|d| d.get_temp::<LpState>(id)).is_some_and(|s| s.fired)
+    /// Reset the gesture (the owner cancelled it or the press moved on).
+    pub(crate) fn reset(ctx: &egui::Context, id: Id) {
+        ctx.data_mut(|d| d.remove::<LpState>(id));
     }
+}
+
+/// The shared gesture id for the Timeline's long press (`LpState` lives under it).
+pub fn long_press_id() -> Id {
+    Id::new("timeline.longPress")
+}
+
+/// A long-press menu as a bottom sheet over the whole window (docs/mobile-ui.md):
+/// the touch stand-in for a right-click. `body` renders the same entries the
+/// right-click menu does. The sheet closes on its scrim, its close button or
+/// Escape.
+pub fn long_press_menu(ctx: &egui::Context, t: &Tokens, body: impl FnOnce(&mut Ui)) {
+    let id = long_press_id().with("sheet");
+    let mut open = true;
+    let _ = bottom_sheet(ctx, t, id, &mut open, tl!("Menu"), body);
 }
 
 /// A modal bottom sheet (the CapCut / Premiere Rush pattern the mobile panels open

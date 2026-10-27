@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use super::mixer::{db_to_pos, pos_to_db};
 use super::timeline::{Layout, Row};
-use super::timeline_hit::EDGE_PX;
+use super::timeline_hit::edge_px;
 use crate::FilmcraftApp;
 use crate::icons::{self, Icon};
 use crate::state::Tool;
@@ -243,7 +243,7 @@ pub fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layou
                 continue;
             }
             // a point on the line for agents, away from the trim zones at the edges
-            let edge = EDGE_PX.min(body.width() / 3.0);
+            let edge = edge_px().min(body.width() / 3.0);
             let (x0, x1) = (vis.min.x.max(body.min.x + edge), vis.max.x.min(body.max.x - edge));
             if x1 > x0 {
                 let xm = (x0 + x1) / 2.0;

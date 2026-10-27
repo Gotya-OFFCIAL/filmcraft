@@ -1,4 +1,4 @@
-//! What a press on the Timeline grabs (#259).
+﻿//! What a press on the Timeline grabs (#259).
 //!
 //! Pure geometry and rules, shared by the cursor, the hover bracket, the press handler and the
 //! control channel's `ui.timeline.hit`, so what the pointer shows is what a press does.
@@ -13,12 +13,29 @@ use filmcraft_time::Tick;
 use super::timeline::Layout;
 use crate::state::Tool;
 
-/// How close (px) to a cut the Selection tool rolls instead of rippling when Settings ▸ Trim ▸
+/// How close (px) to a cut the Selection tool rolls instead of rippling when Settings 鈻?Trim 鈻?
 /// "Allow Selection tool to choose Roll and Ripple trims without modifier key" is on.
 pub const ROLL_PX: f32 = 2.5;
 
 /// Widest an edge zone gets (px), on each side of a clip edge.
 pub const EDGE_PX: f32 = 7.0;
+
+/// Widest it gets under the touch chrome (docs/mobile-ui.md principle 3: a finger
+/// cannot hold a 7 px zone; 卤12 dp is the doc's number for clip handles).
+pub const TOUCH_EDGE_PX: f32 = 12.0;
+
+static EDGE_WIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Arm the +12 dp edge zones for this frame (the touch chrome arms it; every hit
+/// test this frame reads [`edge_px`]).
+pub fn set_touch_edges(on: bool) {
+    EDGE_WIDE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The edge-zone half-width in effect this frame.
+pub fn edge_px() -> f32 {
+    if EDGE_WIDE.load(std::sync::atomic::Ordering::Relaxed) { TOUCH_EDGE_PX } else { EDGE_PX }
+}
 
 /// The trim the Selection tool starts at an edit point: Cmd+Shift = roll, Cmd = ripple. With the
 /// Trim setting on (`no_modifier`), no modifier is needed: right on the cut (when a clip is on the
@@ -142,7 +159,7 @@ pub fn hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Hit {
         let x1 = layout.x_of(trn.end());
         if pos.x >= x0 && pos.x <= x1 && pos.y > row.rect.min.y + 17.0 {
             // the ends are edge zones, narrower on a short transition so its middle stays grabbable
-            let zone = EDGE_PX.min((x1 - x0) / 3.0);
+            let zone = edge_px().min((x1 - x0) / 3.0);
             let edge = if pos.x - x0 <= zone {
                 Some(Edge::In)
             } else if x1 - pos.x <= zone {
@@ -193,7 +210,7 @@ impl Reach {
 /// clip, at most [`EDGE_PX`], so the middle third of a narrow clip still moves it. `None` when the
 /// clip has no usable width (zoomed far out, or a broken zoom): it has no edges then.
 fn zone(w: f32) -> Option<f32> {
-    if w.is_finite() && w > 0.0 { Some(EDGE_PX.min(w / 3.0)) } else { None }
+    if w.is_finite() && w > 0.0 { Some(edge_px().min(w / 3.0)) } else { None }
 }
 
 /// The clip edge on `tr` a pointer at `x` grabs (#259), whatever the order of `tr.items`.
@@ -232,7 +249,7 @@ pub enum EdgeKind {
 }
 
 impl EdgeKind {
-    /// Its name on the control channel (`ui.timeline.hit` → `kind`).
+    /// Its name on the control channel (`ui.timeline.hit` 鈫?`kind`).
     pub fn name(self) -> &'static str {
         match self {
             EdgeKind::Trim => "trim",
@@ -262,7 +279,7 @@ pub enum Grab {
     },
     /// Not an edge this tool trims: a clip body, a transition, an empty track, the ruler or
     /// nothing. A clip's `edge` may still be set, for tools that do something else there (Razor,
-    /// Slip…).
+    /// Slip鈥?.
     Other(Hit),
 }
 
@@ -278,7 +295,7 @@ impl Grab {
 }
 
 /// What a press of `tool` with `mods` at `pos` grabs (#259): the one place that decides which
-/// tools trim at a clip edge and which trim they start. `roll_ripple` is Settings ▸ Trim ▸ "Allow
+/// tools trim at a clip edge and which trim they start. `roll_ripple` is Settings 鈻?Trim 鈻?"Allow
 /// Selection tool to choose Roll and Ripple trims without modifier key".
 pub fn grab_at(seq: &Sequence, layout: &Layout, pos: Pos2, tool: Tool, mods: Modifiers, roll_ripple: bool) -> Grab {
     let h = hit(seq, layout, pos);
@@ -365,7 +382,7 @@ mod tests {
         }
     }
 
-    /// A: 100–300, B: 300–500 (sharing a cut with A), C: 504–700 (after a 4 px gap), D: 800–809
+    /// A: 100鈥?00, B: 300鈥?00 (sharing a cut with A), C: 504鈥?00 (after a 4 px gap), D: 800鈥?09
     /// (9 px wide, so its zones are 3 px).
     fn clips() -> Vec<TrackItem> {
         vec![clip(1, 100.0, 300.0), clip(2, 300.0, 500.0), clip(3, 504.0, 700.0), clip(4, 800.0, 809.0)]
@@ -557,7 +574,7 @@ mod tests {
         assert_eq!(sel(297.0, none, false), edge_grab(tr, 1, Edge::Out, EdgeKind::Trim));
         assert_eq!(sel(303.0, cmd, false), edge_grab(tr, 2, Edge::In, EdgeKind::Ripple));
         assert_eq!(sel(303.0, cmd_shift, false), edge_grab(tr, 2, Edge::In, ROLL_AB));
-        // Settings ▸ Trim: right on the cut rolls, elsewhere on the edge ripples
+        // Settings 鈻?Trim: right on the cut rolls, elsewhere on the edge ripples
         assert_eq!(sel(298.0, none, true), edge_grab(tr, 1, Edge::Out, ROLL_AB));
         assert_eq!(sel(302.0, none, true), edge_grab(tr, 2, Edge::In, ROLL_AB));
         assert_eq!(sel(305.0, none, true), edge_grab(tr, 2, Edge::In, EdgeKind::Ripple));

@@ -23,7 +23,7 @@ use crate::icons::{self, Icon};
 use crate::state::{ThumbnailMode, TimelineView, Tool};
 use crate::theme::Tokens;
 
-use super::timeline_hit::{EDGE_PX, EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_range_rect, marker_rect, marker_under_pointer, work_area_rect};
+use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_range_rect, marker_rect, marker_under_pointer, work_area_rect};
 pub use super::timeline_hit::{Hit, ROLL_PX, hit, selection_trim_kind};
 
 const TOP_H: f32 = 58.0; // timecode + toolbar (left) / ruler (right)
@@ -60,6 +60,9 @@ pub struct TlState {
     pub pressed: Option<Pressed>,
     /// A drag or press aborted with Escape; ignores release until the button comes up (#580).
     pub cancelled: bool,
+    /// Where a long press fired (touch chrome only): the menu opens after `show` returns,
+    /// as a bottom sheet over the whole window.
+    pub long_press_menu: Option<Pos2>,
     /// Last layout (for hit-testing from the control channel).
     pub layout: Option<Layout>,
     /// Snap indicator x (screen) this frame.
@@ -369,6 +372,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     app.last_timeline_width = content.width();
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, t.panel_bg);
+    // Touch chrome: the clip-edge and work-area zones widen to ±12 dp for the whole
+    // frame (docs/mobile-ui.md principle 3); every hit test below reads it.
+    super::timeline_hit::set_touch_edges(app.presentation.is_mobile());
 
     // ---- sequence tabs strip (top-left header block)
     // ---- animated zoom / scroll
@@ -656,7 +662,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 let suffix = if ghost { ".copy" } else { "" };
                 app.auto.add(&format!("timeline.transition.{}{}", trn.id.0, suffix), tr_rect, &trn.effect.effect);
                 // its ends, for dragging the duration (the same zones as the hit test)
-                let zone = super::timeline_hit::EDGE_PX.min(tr_rect.width() / 3.0);
+                let zone = super::timeline_hit::edge_px().min(tr_rect.width() / 3.0);
                 if !ghost {
                     app.auto.add(&format!("timeline.transition.{}.in", trn.id.0), Rect::from_min_max(tr_rect.min, pos2(x0 + zone, tr_rect.max.y)), "start");
                     app.auto.add(&format!("timeline.transition.{}.out", trn.id.0), Rect::from_min_max(pos2(x1 - zone, tr_rect.min.y), tr_rect.max), "end");
@@ -779,6 +785,90 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     super::timeline_automation::show(app, ui, seq, &layout, aclip);
     if cap_n > 0 {
         super::timeline_captions::interact(app, ui, seq, caption_area, &layout);
+    }
+
+    // ---- touch: the long-press menu renders over the whole window as a bottom sheet,
+    // through the same temp targets and menu body the right-click arms (`Context::
+    // context_menu`'s closure body inlines them; both must change together).
+    if app.tl.long_press_menu.take().is_some() {
+        let marker_menu_id = egui::Id::new("timeline.markerMenu.target");
+        let edit_point_menu_id = egui::Id::new("timeline.editPointMenu.target");
+        let gap_menu_id = egui::Id::new("timeline.gapMenu.open");
+        let menu_clip_id = egui::Id::new("timeline.clipMenu.clip");
+        let t = app.tokens;
+        let max_height = (ctx.content_rect().height() * 0.7).max(0.0);
+        crate::mobile::long_press_menu(&ctx, &t, |ui| {
+            ui.set_min_width(260.0);
+            egui::ScrollArea::vertical().id_salt("clip-menu-touch-scroll").max_height(max_height).min_scrolled_height(max_height).show(ui, |ui| {
+                ui.set_min_width(260.0);
+                if let Some(marker) = ctx.data(|d| d.get_temp::<Option<MarkerId>>(marker_menu_id)).flatten() {
+                    marker_menu(app, &ctx, ui, marker);
+                    return;
+                }
+                if let Some(target) = ctx.data(|d| d.get_temp::<Option<EditPointTarget>>(edit_point_menu_id)).flatten() {
+                    edit_point_menu(app, &ctx, ui, seq, target);
+                    return;
+                }
+                if ctx.data(|d| d.get_temp::<bool>(gap_menu_id)).unwrap_or(false) {
+                    gap_menu(app, &ctx, ui);
+                    return;
+                }
+                let sel = app.session.state.selection.clone();
+                let picked: Vec<&filmcraft_project::TrackItem> = sel.iter().filter_map(|c| seq.find_item(*c).map(|(_, it)| it)).collect();
+                let all_enabled = !picked.is_empty() && picked.iter().all(|it| it.enabled);
+                let linked = picked.iter().any(|it| it.link.is_some());
+                let mut first = true;
+                for group in CLIP_MENU {
+                    if !std::mem::take(&mut first) {
+                        ui.separator();
+                    }
+                    for &(label, cmd) in *group {
+                        if cmd == "edit.label" {
+                            ui.add_enabled_ui(!picked.is_empty(), |ui| {
+                                let menu = ui.menu_button(crate::i18n::t(label), |ui| {
+                                    let labels = app.session.prefs.labels.clone();
+                                    for l in filmcraft_project::Label::ALL {
+                                        if crate::menus::label_choice(ui, &mut app.auto, &labels, l, "timeline.clipMenu.label").clicked() {
+                                            if let Err(error) = app.session.execute("edit.label", json!({"label": l.name()})) {
+                                                app.ui.status = error.to_string();
+                                            }
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                                app.auto.add_response("timeline.clipMenu.edit.label", &menu.response, crate::i18n::t(label));
+                            });
+                            continue;
+                        }
+                        if cmd == "clip.multicam" {
+                            multicam_menu(app, ui, &picked);
+                            continue;
+                        }
+                        let label = match cmd {
+                            "clip.enable" if all_enabled => tl!("✓ Enable"),
+                            "clip.link" if linked => tl!("Unlink"),
+                            _ => crate::i18n::t(label),
+                        };
+                        let r = ui.add_enabled(!sel.is_empty() && app.session.is_enabled(cmd), egui::Button::new(label));
+                        app.auto.add(&format!("timeline.clipMenu.{cmd}"), r.rect, label);
+                        if r.clicked() {
+                            match crate::menus::invoke(app, &ctx, cmd, json!({})) {
+                                Ok(v) if cmd == "clip.link" && v["linked"] == json!(false) => {
+                                    if let Some(clip) = ctx.data(|d| d.get_temp::<ClipId>(menu_clip_id))
+                                        && app.session.state.selection.contains(&clip)
+                                    {
+                                        let _ = app.session.execute("timeline.select", json!({"clips": [clip.0]}));
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(e) => app.ui.status = e,
+                            }
+                            ui.close();
+                        }
+                    }
+                }
+            });
+        });
     }
     let _ = (visible, TICKS_PER_SECOND);
 }
@@ -1738,7 +1828,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         }
         app.auto.add("timeline.workArea", r.intersect(ruler), "Work Area Bar");
         let fmt = |tick: Tick| format_time(tick, rate, seq.settings.drop_frame, TimeDisplay::Timecode, 48000);
-        if ui.rect_contains_pointer(r.expand2(vec2(EDGE_PX, 1.0)).intersect(ruler)) {
+        if ui.rect_contains_pointer(r.expand2(vec2(super::timeline_hit::edge_px(), 1.0)).intersect(ruler)) {
             egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new("work-area-tip"), egui::PopupAnchor::Pointer).show(|ui| {
                 ui.label(tlf!("Start: {tc}", tc = fmt(area.start)));
                 ui.label(tlf!("End: {tc}", tc = fmt(area.end())));
@@ -3105,6 +3195,34 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             }
         });
     });
+
+    // ---- touch: a long press opens the same menus the right-click does
+    // (docs/mobile-ui.md principle 3). The long press arms on a still press over a
+    // clip, transition or marker; lifting fires it, so a drag never pops a menu.
+    // egui 0.36 has no programmatic menu opener, so the menu renders as a bottom
+    // sheet over the whole window after `show` returns, through the same temp
+    // targets the secondary-click block arms and the same menu body (`Context::
+    // context_menu`'s closure), so a right-click and a long press agree.
+    let long_press_id = crate::mobile::long_press_id();
+    if app.presentation.is_mobile() {
+        if let Some(p) = ctx.input(|i| i.pointer.press_origin().filter(|_| i.pointer.any_pressed()))
+            && !matches!(hit(seq, layout, p), Hit::Ruler)
+        {
+            if let Some(fire) = crate::mobile::LongPress::fire(&ctx, long_press_id, layout.content)
+                && app.tl.drag.is_none()
+                && !app.tl.cancelled
+            {
+                app.tl.long_press_menu = Some(fire);
+                // the still press would otherwise start a drag or scrub when the finger
+                // stays down; cancel the gesture, the menu owns it now
+                app.tl.cancelled = true;
+                app.tl.drag = None;
+                app.tl.pressed = None;
+            }
+        } else {
+            crate::mobile::LongPress::reset(&ctx, long_press_id);
+        }
+    }
 
     // ---- drops: project items and effects
     if let Some(item) = crate::panels::dragged_project_item(ui)
