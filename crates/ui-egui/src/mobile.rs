@@ -1,25 +1,26 @@
-//! Touch presentation: the phone and tablet chrome (docs/mobile-ui.md).
+//! Touch presentation: the phone chrome (docs/mobile-ui.md).
 //!
 //! Same engine, same command ids, same undo as the desktop - only the chrome changes.
-//! Each frame the app decides a [`crate::state::Presentation`] (auto on Android from
-//! the window size and the input device; `FILMCRAFT_PRESENTATION` forces one for
-//! development), and the mobile shells draw with the primitives here: the touch style
-//! tokens, the bottom sheet, the long press that stands in for right-click, and the
-//! two-stage ghost drag that keeps a finger from destroying what it hides.
+//! Two orthogonal switches come out of [`detect`] each frame:
+//!
+//! - **touch chrome** (any Android window): the header as workspace chips, and the
+//!   single-column Import / Export pages. Landscape keeps the desktop docking body
+//!   under this chrome - measured on device, a restacked landscape scored worse than
+//!   the plain three-pane layout, which is already finger-sized at phone pixel
+//!   density.
+//! - **portrait stack** (a phone held upright): monitor over timeline over a tool
+//!   dock, with the 44 dp metrics the stack has room for.
+//!
+//! `FILMCRAFT_PRESENTATION` forces one for development on any platform.
 
-use egui::{Align2, Color32, Id, Key, PointerButton, Pos2, Rect, Response, ScrollArea, Sense, Ui, Vec2};
+use egui::{Align2, Color32, FontId, Id, Key, PointerButton, Pos2, Rect, Response, ScrollArea, Sense, Ui, Vec2};
 
 use crate::state::Presentation;
 use crate::theme::Tokens;
 
-/// Below this shortest window edge (logical points) a touch device is a phone: the
-/// portrait chrome stacks one pane full-bleed. Between this and [`DESKTOP_SHORT_EDGE`]
-/// the landscape chrome pairs the monitor over the timeline.
+/// Below this shortest window edge (logical points) a touch device held upright is a
+/// phone: the portrait chrome stacks the monitor over the timeline and a tool dock.
 pub(crate) const PHONE_SHORT_EDGE: f32 = 720.0;
-/// A touch device whose short edge clears this keeps the desktop chrome: at wall
-/// sizes the three-pane layout is usable with fingers, and restacking would only
-/// lose screen.
-pub(crate) const DESKTOP_SHORT_EDGE: f32 = 1_100.0;
 
 /// The smallest touch target, in dp (Material guidance; docs/mobile-ui.md principle
 /// 2). Every interactive element's hit box grows to at least this.
@@ -50,14 +51,7 @@ pub(crate) fn detect(android: bool, content: Vec2) -> Presentation {
     if !android {
         return Presentation::Desktop;
     }
-    let short = content.x.min(content.y);
-    if short >= DESKTOP_SHORT_EDGE {
-        Presentation::Desktop
-    } else if short < PHONE_SHORT_EDGE && is_portrait(content) {
-        Presentation::MobilePortrait
-    } else {
-        Presentation::MobileLandscape
-    }
+    if content.x.min(content.y) < PHONE_SHORT_EDGE && is_portrait(content) { Presentation::MobilePortrait } else { Presentation::MobileLandscape }
 }
 
 /// `FILMCRAFT_PRESENTATION=desktop|landscape|portrait`, for driving the mobile shells
@@ -71,17 +65,19 @@ fn forced() -> Option<Presentation> {
     }
 }
 
-/// Grow the interaction metrics to touch size for the frame (docs/mobile-ui.md
-/// principle 2). Called after the theme and the UI scale, so it wins while a mobile
-/// presentation is active. Leaving the touch chrome restores the desktop metrics
-/// (theme.rs sets them with the visuals, which a presentation change does not rerun),
-/// so the switch is applied once per (presentation, theme) pair.
+/// Grow the interaction metrics to touch size for the portrait stack (docs/mobile-ui.md
+/// principle 2): the restacked panes have the room, and their widgets are all the user
+/// reaches for. Landscape keeps the desktop metrics - the docking layout is built
+/// around them, and its own hit targets are already finger-sized at phone density.
+/// Leaving the portrait chrome restores the theme's metrics (theme.rs sets them with
+/// the visuals, which a presentation change does not rerun), so the switch is applied
+/// once per (presentation, theme) pair.
 pub(crate) fn apply_style(ctx: &egui::Context, t: &Tokens, applied: &mut Option<(Presentation, crate::theme::ThemeKind)>, p: Presentation) {
     if applied.is_some_and(|(prev, kind)| prev == p && kind == t.kind) {
         return;
     }
     *applied = Some((p, t.kind));
-    if p == Presentation::Desktop {
+    if p != Presentation::MobilePortrait {
         crate::theme::apply_visuals(ctx, t);
         return;
     }
@@ -146,8 +142,8 @@ impl LongPress {
 
 /// A modal bottom sheet (the CapCut / Premiere Rush pattern the mobile panels open
 /// through): full-width, pinned to the bottom, capped at 70 % of the screen height,
-/// scrollable, closed by tapping the scrim, the ✕, or Escape. `open` is flipped to
-/// false on any dismissal; the body's value comes back only while open.
+/// scrollable, closed by tapping the scrim, the close button, or Escape. `open` is
+/// flipped to false on any dismissal; the body's value comes back only while open.
 pub(crate) fn bottom_sheet<R>(ctx: &egui::Context, t: &Tokens, id: Id, open: &mut bool, heading: &str, body: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     if !*open {
         return None;
@@ -173,7 +169,7 @@ pub(crate) fn bottom_sheet<R>(ctx: &egui::Context, t: &Tokens, id: Id, open: &mu
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(heading).strong().size(16.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(egui::RichText::new("✕").size(16.0)).clicked() {
+                            if ui.button(egui::RichText::new("\u{00d7}").size(18.0)).clicked() {
                                 *open = false;
                             }
                         });
@@ -289,9 +285,8 @@ pub(crate) fn top_bar(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let sheet_id = ui.id().with("more-sheet");
             let mut open = ui.ctx().data(|d| d.get_temp::<bool>(sheet_id)).unwrap_or(false);
-            let more = ui.button(egui::RichText::new("⋯").size(18.0));
-            if more.clicked() {
-                open = true;
+            if ui.button(egui::RichText::new("\u{22ef}").size(18.0)).clicked() {
+                open = !open;
             }
             let _ = bottom_sheet(ui.ctx(), &t, sheet_id, &mut open, tl!("View"), |ui| {
                 // P2 fills this sheet: theme, layout toggles, the panels the
@@ -305,26 +300,27 @@ pub(crate) fn top_bar(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
     });
 }
 
-/// The Edit chrome on a phone or tablet: the Program monitor over the Timeline, with
-/// a draggable divider remembering its share (docs/mobile-ui.md: the Premiere Rush
-/// pairing; portrait gives the monitor less of the screen than landscape).
+/// The portrait Edit chrome: the Program monitor over the Timeline over the tool
+/// dock (docs/mobile-ui.md), with a draggable divider remembering the monitor's
+/// share. The dock's commands run the same ids the desktop menus fire.
 pub(crate) fn edit(app: &mut crate::FilmcraftApp, ui: &mut Ui, body: Rect) {
-    let portrait = is_portrait(ui.ctx().viewport_rect().size());
     let id = ui.id().with("mobile-edit-split");
-    let default = if portrait { 0.42 } else { 0.55 };
-    let mut share = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(default);
+    let mut share = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(0.42);
     let handle_h = MIN_TOUCH_DP * 0.6;
-    let monitor_h = ((body.height() - handle_h) * share).max(120.0);
-    let monitor = Rect::from_min_size(body.min, Vec2::new(body.width(), monitor_h));
-    let handle = Rect::from_min_size(Pos2::new(body.min.x, monitor.max.y), Vec2::new(body.width(), handle_h));
-    let timeline = Rect::from_min_max(Pos2::new(body.min.x, handle.max.y), body.max);
+    let dock_h = 64.0;
+    let stack = Rect::from_min_max(body.min, Pos2::new(body.max.x, body.max.y - dock_h));
+    let dock = Rect::from_min_max(Pos2::new(body.min.x, stack.max.y), body.max);
+    let monitor_h = ((stack.height() - handle_h) * share).max(120.0);
+    let monitor = Rect::from_min_size(stack.min, Vec2::new(stack.width(), monitor_h));
+    let handle = Rect::from_min_size(Pos2::new(stack.min.x, monitor.max.y), Vec2::new(stack.width(), handle_h));
+    let timeline = Rect::from_min_max(Pos2::new(stack.min.x, handle.max.y), stack.max);
 
     let t = app.tokens;
     ui.painter().rect_filled(handle, 0.0, t.header_bg);
     let resp = ui.interact(handle, id.with("handle"), Sense::drag());
     if resp.dragged() {
         let dy = ui.ctx().input(|i| i.pointer.delta()).y;
-        share = ((monitor.max.y + dy - body.min.y) / (body.height() - handle_h)).clamp(0.25, 0.75);
+        share = ((monitor.max.y + dy - stack.min.y) / (stack.height() - handle_h)).clamp(0.25, 0.75);
         ui.ctx().data_mut(|d| d.insert_temp(id, share));
     }
     // The grab bar in the middle of the handle, so it reads as draggable.
@@ -335,5 +331,102 @@ pub(crate) fn edit(app: &mut crate::FilmcraftApp, ui: &mut Ui, body: Rect) {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(("mobile-panel", panel.id())));
         child.set_clip_rect(rect.intersect(ui.clip_rect()));
         crate::panels::show(app, &mut child, panel, rect);
+    }
+    tool_dock(app, ui, dock);
+}
+
+/// The CapCut-style bottom dock: the edits a thumb makes one-handed (undo, redo,
+/// split at the playhead, ripple delete), the two toggles worth pinning (snap, zoom
+/// to fit), and an overflow button opening the rest as a bottom sheet. Every target
+/// clears [`MIN_TOUCH_DP`]; a command the engine would refuse greys itself out from
+/// the same enabled state the desktop menus read.
+fn tool_dock(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
+    let t = app.tokens;
+    let ctx = ui.ctx().clone();
+    ui.painter().rect_filled(rect, 0.0, t.header_bg);
+    // The enabled table is the one the desktop menus build from; take it before
+    // anything else borrows the app.
+    let items = crate::menus::menu_items(app);
+    let can = |id: &str| items.iter().find(|it| it.id == id).is_some_and(|it| it.enabled);
+    let snapping = app.session.state.snapping;
+    let sheet_id = ui.id().with("dock-more-sheet");
+    let mut open = ui.ctx().data(|d| d.get_temp::<bool>(sheet_id)).unwrap_or(false);
+
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(6.0, 4.0))).id_salt("mobile-dock"));
+    let mut clicked: Option<&'static str> = None;
+    child.horizontal_centered(|ui| {
+        let mut dock_button = |ui: &mut Ui, icon: crate::icons::Icon, label: &str, id: &'static str, enabled: bool, pressed: bool| {
+            let resp = ui.add_enabled(
+                enabled,
+                egui::Button::new(egui::RichText::new("").size(1.0))
+                    .fill(if pressed { t.accent } else { Color32::TRANSPARENT })
+                    .min_size(Vec2::new(52.0, MIN_TOUCH_DP)),
+            );
+            let r = resp.rect;
+            let col = if !enabled {
+                t.text_faint
+            } else if pressed {
+                Color32::WHITE
+            } else {
+                t.text
+            };
+            crate::icons::paint(ui.painter(), Rect::from_center_size(Pos2::new(r.center().x, r.center().y - 8.0), Vec2::splat(20.0)), icon, col);
+            ui.painter().text(Pos2::new(r.center().x, r.max.y - 9.0), Align2::CENTER_CENTER, label, FontId::proportional(9.5), col);
+            app.auto.add(&format!("mobile.dock.{id}"), r, label);
+            resp.clicked()
+        };
+        if dock_button(ui, crate::icons::Icon::Undo, tl!("Undo"), "edit.undo", can("edit.undo"), false) {
+            clicked = Some("edit.undo");
+        }
+        if dock_button(ui, crate::icons::Icon::Redo, tl!("Redo"), "edit.redo", can("edit.redo"), false) {
+            clicked = Some("edit.redo");
+        }
+        if dock_button(ui, crate::icons::Icon::Razor, tl!("Split"), "sequence.addEdit", can("sequence.addEdit"), false) {
+            clicked = Some("sequence.addEdit");
+        }
+        if dock_button(ui, crate::icons::Icon::Ripple, tl!("Delete"), "edit.rippleDelete", can("edit.rippleDelete"), false) {
+            clicked = Some("edit.rippleDelete");
+        }
+        if dock_button(ui, crate::icons::Icon::Magnet, tl!("Snap"), "sequence.snap", can("sequence.snap"), snapping) {
+            clicked = Some("sequence.snap");
+        }
+        if dock_button(ui, crate::icons::Icon::Zoom, tl!("Fit"), "view.zoomToSequence", can("view.zoomToSequence"), false) {
+            clicked = Some("view.zoomToSequence");
+        }
+        if dock_button(ui, crate::icons::Icon::Hamburger, tl!("More"), "mobile.more", can("sequence.lift"), open) {
+            open = !open;
+        }
+    });
+
+    // The overflow sheet: the edits that do not earn a dock slot.
+    let picked = bottom_sheet(&ctx, &t, sheet_id, &mut open, tl!("Edit"), |ui| -> Option<&'static str> {
+        for (icon, label, id) in [
+            (crate::icons::Icon::Lift, tl!("Lift"), "sequence.lift"),
+            (crate::icons::Icon::Extract, tl!("Extract"), "sequence.extract"),
+            (crate::icons::Icon::MarkIn, tl!("Mark Clip"), "markers.markClip"),
+            (crate::icons::Icon::MarkOut, tl!("Mark Selection"), "markers.markSelection"),
+            (crate::icons::Icon::Marker, tl!("Go to In"), "markers.goToIn"),
+            (crate::icons::Icon::Link, tl!("Linked Selection"), "sequence.linkedSelection"),
+            (crate::icons::Icon::Sequence, tl!("Copy"), "edit.copy"),
+            (crate::icons::Icon::Plus, tl!("Paste"), "edit.paste"),
+        ] {
+            let row = ui.add_enabled(
+                can(id),
+                egui::Button::new(egui::RichText::new(format!("   {label}")).size(14.0))
+                    .fill(Color32::TRANSPARENT)
+                    .min_size(Vec2::new(ui.available_width(), MIN_TOUCH_DP)),
+            );
+            crate::icons::paint(ui.painter(), Rect::from_center_size(Pos2::new(row.rect.min.x + 22.0, row.rect.center().y), Vec2::splat(18.0)), icon, t.text);
+            if row.clicked() {
+                return Some(id);
+            }
+        }
+        None
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(sheet_id, open));
+    // The sheet wraps its body's Option in its own open/closed Option.
+    if let Some(id) = picked.flatten().or(clicked) {
+        let params = if id == "markers.goToIn" { serde_json::json!({"target": "program"}) } else { serde_json::json!({}) };
+        let _ = crate::menus::invoke(app, &ctx, id, params);
     }
 }

@@ -173,26 +173,32 @@ pub enum Mode {
     Export,
 }
 
-/// Which chrome the app draws this frame (docs/mobile-ui.md): the desktop docking
-/// layout, or one of the two touch presentations. The same engine and commands run
-/// under all three; only the panels' arrangement and hit targets change. Decided per
-/// frame by [`crate::mobile::detect`] from the window size and the input device, and
-/// never persisted: rotating the device or resizing the window restacks live.
+/// Which chrome the app draws this frame (docs/mobile-ui.md). The same engine and
+/// commands run under all three; only the chrome changes. Decided per frame by
+/// [`crate::mobile::detect`] from the window size and shape, and never persisted:
+/// rotating the device restacks live.
+///
+/// Landscape keeps the desktop docking body: measured on device, the three-pane
+/// layout is what makes the panes readable side by side, and at a phone's landscape
+/// pixel density the desktop metrics are already finger-sized - a restacked
+/// landscape scored worse with the user than the plain desktop chrome. It takes the
+/// touch header and the single-column Import / Export pages, which is what the
+/// finger actually needs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Presentation {
-    /// The three-pane Premiere layout (docking, right-click, hover semantics).
+    /// The desktop: three-pane Premiere docking, mouse menus, dense metrics.
     #[default]
     Desktop,
-    /// Tablet / large-phone landscape: the monitor over the timeline, panels in a
-    /// drawer (the Premiere Rush arrangement).
+    /// Touch device, landscape or wide: the desktop docking body under the touch
+    /// header and the touch Import / Export pages, with the desktop's dense metrics.
     MobileLandscape,
-    /// Phone portrait: one pane full-bleed, the timeline docked at the bottom, a
-    /// tool tray (the CapCut arrangement).
+    /// Phone portrait: the monitor over the timeline over a CapCut-style tool dock,
+    /// under the same touch header and pages.
     MobilePortrait,
 }
 
 impl Presentation {
-    /// Any touch chrome (the two mobile presentations).
+    /// Any touch chrome (the header, the metrics, the Import / Export pages).
     pub fn is_mobile(self) -> bool {
         matches!(self, Self::MobileLandscape | Self::MobilePortrait)
     }

@@ -1891,8 +1891,11 @@ impl FilmcraftApp {
         let t = self.tokens;
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, t.app_bg);
-        // The touch chrome replaces the desktop header and docking on phones and
-        // tablets (docs/mobile-ui.md); everything else draws exactly as before.
+        // The touch chrome (docs/mobile-ui.md): the header is always the chip bar on
+        // a touch device, the Import and Export pages are always the single-column
+        // forms, and the portrait stack restacks the Edit body. Landscape keeps the
+        // desktop docking body - measured on device, it reads and reaches better
+        // than any restack at that shape. Everything else draws exactly as before.
         self.presentation = mobile::detect(cfg!(target_os = "android"), full.size());
         mobile::apply_style(&ctx, &t, &mut self.applied_touch_style, self.presentation);
         let header_h = if self.ui.show_header { if self.presentation.is_mobile() { 52.0 } else { 38.0 } } else { 0.0 };
@@ -1906,7 +1909,7 @@ impl FilmcraftApp {
         let status_h = if self.ui.show_status_bar { 20.0 } else { 0.0 };
         let body = egui::Rect::from_min_max(egui::pos2(full.min.x + 1.0, header.max.y + 1.0), egui::pos2(full.max.x - 1.0, full.max.y - status_h - 2.0));
         match self.ui.mode {
-            state::Mode::Edit if self.presentation.is_mobile() => mobile::edit(self, ui, body),
+            state::Mode::Edit if self.presentation == state::Presentation::MobilePortrait => mobile::edit(self, ui, body),
             state::Mode::Edit => self.dock_area(ui, body),
             state::Mode::Import if self.presentation.is_mobile() => panels::import_mode::show_mobile(self, ui, body),
             state::Mode::Import => panels::import_mode::show(self, ui, body),
@@ -2006,6 +2009,10 @@ impl FilmcraftApp {
     fn hint_text(&self) -> String {
         let mac = cfg!(target_os = "macos");
         match self.ui.tool {
+            // A finger has no modifiers to name (docs/mobile-ui.md).
+            state::Tool::Selection if self.presentation.is_mobile() => {
+                tl!("Tap to select, or tap in empty space and drag to marquee select.")
+            }
             state::Tool::Selection if mac => {
                 tl!("Click to select, or click in empty space and drag to marquee select. Use Shift, Opt, and Cmd for other options.")
             }
