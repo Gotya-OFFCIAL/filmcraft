@@ -313,16 +313,20 @@ pub(crate) fn top_bar(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
 }
 
 /// One command row of a touch sheet: icon, translated label, greyed when the engine
-/// would refuse the command (the same enabled table the desktop menus read).
+/// would refuse the command (the same enabled table the desktop menus read). Drawn
+/// as a plain clickable rect rather than a Button: the button's own padding would
+/// fight the icon slot, and a finger only needs the row, not a chrome frame.
 fn command_row(ui: &mut Ui, t: &Tokens, can: &dyn Fn(&str) -> bool, icon: crate::icons::Icon, label: &str, id: &'static str) -> bool {
-    let row = ui.add_enabled(
-        can(id),
-        egui::Button::new(egui::RichText::new(format!("   {label}")).size(14.0))
-            .fill(Color32::TRANSPARENT)
-            .min_size(Vec2::new(ui.available_width(), MIN_TOUCH_DP)),
-    );
-    crate::icons::paint(ui.painter(), Rect::from_center_size(Pos2::new(row.rect.min.x + 22.0, row.rect.center().y), Vec2::splat(18.0)), icon, t.text);
-    row.clicked()
+    let (rect, resp) = ui.allocate_at_least(Vec2::new(ui.available_width(), MIN_TOUCH_DP), if can(id) { Sense::click() } else { Sense::hover() });
+    let col = if can(id) { t.text } else { t.text_faint };
+    if ui.is_rect_visible(rect) {
+        if resp.hovered() && can(id) {
+            ui.painter().rect_filled(rect, 6.0, t.hover);
+        }
+        crate::icons::paint(ui.painter(), Rect::from_center_size(Pos2::new(rect.min.x + 18.0, rect.center().y), Vec2::splat(18.0)), icon, col);
+        ui.painter().text(Pos2::new(rect.min.x + 40.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(14.0), col);
+    }
+    resp.clicked()
 }
 
 /// The commands the ⋯ sheet lists: the file work the desktop menu bar owned (the
