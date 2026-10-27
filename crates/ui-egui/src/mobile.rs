@@ -432,3 +432,23 @@ fn tool_dock(app: &mut crate::FilmcraftApp, ui: &mut Ui, rect: Rect) {
         let _ = crate::menus::invoke(app, &ctx, id, params);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shapes_pick_the_chrome() {
+        // A desktop is never touch chrome, at any size.
+        assert_eq!(detect(false, egui::vec2(400.0, 800.0)), Presentation::Desktop);
+        // Phone portrait: the stacked shell.
+        assert_eq!(detect(true, egui::vec2(400.0, 800.0)), Presentation::MobilePortrait);
+        // The 2K tablet at 320 dpi, held upright, is exactly 720 dp short edge: a phone.
+        assert_eq!(detect(true, egui::vec2(720.0, 1280.0)), Presentation::MobilePortrait);
+        // The same device landscape: the docking body under the touch chrome.
+        assert_eq!(detect(true, egui::vec2(1138.0, 640.0)), Presentation::MobileLandscape);
+        // A tall narrow window on a big touch display stays landscape chrome: portrait
+        // stacking is for phones, not for a resized tablet side-strip.
+        assert_eq!(detect(true, egui::vec2(900.0, 1400.0)), Presentation::MobileLandscape);
+    }
+}
