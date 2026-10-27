@@ -374,7 +374,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     let zoom_x = if stacked_controls && which == Which::Source && !separate_source_drag {
         row1.min.x
     } else if stacked_controls {
-        row1.center().x - 83.0
+        // Keep the cluster clear of the 110-wide timecode field: centring it would
+        // slide under the timecode in a phone-width monitor (the portrait stack).
+        (row1.center().x - 83.0).max(row1.min.x + 116.0)
     } else {
         row1.min.x + 116.0
     };
