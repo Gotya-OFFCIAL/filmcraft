@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 
 use crate::FilmcraftApp;
 use crate::icons::{self, Icon};
-use crate::state::{ThumbnailMode, TimelineView, Tool};
+use crate::state::{Presentation, ThumbnailMode, TimelineView, Tool};
 use crate::theme::Tokens;
 
 use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_range_rect, marker_rect, marker_under_pointer, work_area_rect};
@@ -31,6 +31,28 @@ const RULER_H: f32 = 44.0;
 const SCROLLBAR_H: f32 = 17.0;
 const DIVIDER_H: f32 = 5.0;
 const MASTER_H: f32 = 34.0;
+/// The portrait stack's track column (docs/mobile-ui.md P3): on a 720 dp phone the desktop's
+/// 204 pt header eats a quarter of the lane a finger actually edits, so the portrait chrome
+/// clamps it. 152 pt is the narrowest column whose controls still fit once [`draw_headers`]
+/// shifts the button block left and [`draw_top`] tightens the toggle pitch; halving it would
+/// clip the audio header's record / keyframe buttons.
+const PORTRAIT_HEADER_W: f32 = 152.0;
+/// Clearance the portrait chrome keeps under the master (mix) row, so its text never sits
+/// in the zoom scroll bar's band.
+const PORTRAIT_BOTTOM_PAD: f32 = 10.0;
+
+/// The track column's width for this frame: the stored value, clamped for the portrait stack.
+/// Every reader of `app.ui.timeline.header_w` that lays out the panel goes through this, so the
+/// column, its headers, the top block and the captions agree.
+pub fn effective_header_w(app: &FilmcraftApp) -> f32 {
+    if app.presentation == Presentation::MobilePortrait { app.ui.timeline.header_w.min(PORTRAIT_HEADER_W) } else { app.ui.timeline.header_w }
+}
+
+/// The portrait stack's bottom clearance under the track area (see [`PORTRAIT_BOTTOM_PAD`]).
+fn bottom_pad(app: &FilmcraftApp) -> f32 {
+    if app.presentation == Presentation::MobilePortrait { PORTRAIT_BOTTOM_PAD } else { 0.0 }
+}
+
 /// The selected gap between two clips (#648, #668).
 const GAP_FILL: Color32 = Color32::from_gray(224);
 /// Duplicate frame marker colors, one per master clip with duplicate frames in the order they
@@ -366,8 +388,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     };
     let rate = seq.settings.frame_rate;
     let dt = ctx.input(|i| i.stable_dt).min(0.05) as f64;
-    let header_w = app.ui.timeline.header_w;
-    let content = Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + TOP_H), pos2(rect.max.x - SCROLLBAR_H, rect.max.y - SCROLLBAR_H));
+    let header_w = effective_header_w(app);
+    // The portrait chrome keeps a bottom clearance so the master (mix) row never sits flush
+    // against the panel's bottom edge / the zoom scroll bar band.
+    let content =
+        Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + TOP_H), pos2(rect.max.x - SCROLLBAR_H, rect.max.y - SCROLLBAR_H - bottom_pad(app)));
     let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + TOP_H - RULER_H), pos2(content.max.x, rect.min.y + TOP_H));
     app.last_timeline_width = content.width();
     let painter = ui.painter().clone();
@@ -1442,7 +1467,11 @@ fn patch_button(ui: &mut egui::Ui, r: Rect, clip: Rect, label: &str, on: bool, s
 
 #[allow(clippy::too_many_arguments)]
 fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows: &[Row], rect: Rect, vclip: Rect, aclip: Rect, t: &Tokens) {
-    let hw = app.ui.timeline.header_w;
+    let hw = effective_header_w(app);
+    // The portrait stack's narrow column reflows the header: the patch / lock / target block
+    // moves left, and the audio track's record / keyframe buttons and the track name take a
+    // lower row, so nothing is clipped at PORTRAIT_HEADER_W. Desktop keeps its layout.
+    let touch = app.presentation == Presentation::MobilePortrait;
     let tg = app.session.targeting();
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut vo_action = None;
@@ -1494,7 +1523,7 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         let btn_rect = |x0: f32| Rect::from_min_max(pos2(hrect.min.x + x0, hrect.min.y + 1.0), pos2(hrect.min.x + x0 + 24.0, hrect.max.y - 2.0));
         // 1. source patch (absent when unpatched)
         let patched = if r.kind == TrackKind::Video { tg.video_dest == Some(r.track) } else { tg.audio_dest == Some(r.track) };
-        let pr = btn_rect(13.0);
+        let pr = btn_rect(if touch { 4.0 } else { 13.0 });
         app.auto.add(&format!("timeline.track.{label}.sourcePatch"), pr, "Source patch");
         if patch_button(ui, pr, visible, &label, patched, false, egui::Id::new(("patch", r.track.0)), t).clicked() {
             actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "sourcePatch": !patched})));
@@ -1502,7 +1531,9 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         // 2. track lock
         let small = |x: f32, y: f32| Rect::from_center_size(pos2(hrect.min.x + x, y), vec2(18.0, 18.0));
         let upper_y = hrect.min.y + (16.0f32).min(hrect.height() / 2.0);
-        let lock_r = small(49.0, hrect.center().y);
+        // the touch column's lower row: the name, and (audio) the record / keyframe buttons
+        let lower_y = hrect.min.y + (hrect.height() - 11.0).max(upper_y + 12.0);
+        let lock_r = small(if touch { 40.0 } else { 49.0 }, hrect.center().y);
         let lresp = crate::widgets::icon_toggle(
             ui,
             lock_r.intersect(visible),
@@ -1522,13 +1553,13 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
         // 3. target
         let targeted = tg.targeted.contains(&r.track);
-        let trr = btn_rect(61.0);
+        let trr = btn_rect(if touch { 50.0 } else { 61.0 });
         app.auto.add(&format!("timeline.track.{label}.target"), trr, "Toggle track targeting");
         if patch_button(ui, trr, visible, &label, targeted, true, egui::Id::new(("target", r.track.0)), t).clicked() {
             actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "targeted": !targeted})));
         }
         // 4. upper line icons
-        let mut x = 102.0;
+        let mut x = if touch { 86.0 } else { 102.0 };
         let sr = small(x, upper_y);
         let sresp =
             crate::widgets::icon_toggle(ui, sr.intersect(visible), Icon::SyncLock, tr.sync_lock, t, egui::Id::new(("syncLock", r.track.0)), Some(t.text_dim));
@@ -1581,16 +1612,20 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             if so.clicked() {
                 actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "solo": !tr.solo})));
             }
-            let vr = small(x + 42.0, upper_y);
+            // the touch column drops the two rarer buttons to the lower row, right of the
+            // name: at 152 pt the upper row is full (sync · M · S) and x + 64 runs past it
+            let vr = small(if touch { 86.0 } else { x + 42.0 }, if touch { lower_y } else { upper_y });
             if let Some(a) = super::voiceover::header_button(app, ui, r.track, vr, visible, &label, t) {
                 vo_action = Some(a);
             }
-            let kr = small(x + 64.0, upper_y);
+            let kr = small(if touch { 110.0 } else { x + 64.0 }, if touch { lower_y } else { upper_y });
             super::timeline_automation::header_button(app, ui, seq, r, kr, visible, &label, t);
         }
-        // 5. name on the lower line (or inline when short)
+        // 5. name on the lower line (or inline when short); the touch column starts it under the
+        // button block, whose left half is empty below the vertically centred lock
         if hrect.height() >= 40.0 {
-            p.text(pos2(hrect.min.x + 94.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.0), t.text_dim);
+            let (nx, ny) = if touch { (32.0, lower_y) } else { (94.0, hrect.min.y + 34.0) };
+            p.text(pos2(hrect.min.x + nx, ny), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.0), t.text_dim);
         }
         // resize track height by dragging the header's bottom edge, or the outer edge of the top video
         // track or the last audio track, which also reaches into the empty space past it
@@ -1614,8 +1649,12 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
                 *h = (*h + d).clamp(22.0, 220.0);
             }
         }
+        // The double-click-to-toggle-height region: the right part of the header, below the
+        // desktop's upper icon row. The touch column's record / keyframe pair sits on the lower
+        // row, so the region starts after it there (an earlier start would steal their clicks).
+        let hdr_x = if touch && r.kind == TrackKind::Audio { 124.0 } else { 90.0 };
         let resp = ui.interact(
-            Rect::from_min_max(pos2(hrect.min.x + 90.0, hrect.min.y + 26.0), hrect.max).intersect(visible),
+            Rect::from_min_max(pos2(hrect.min.x + hdr_x, hrect.min.y + 26.0), hrect.max).intersect(visible),
             egui::Id::new(("hdr", r.track.0)),
             Sense::click(),
         );
@@ -1655,7 +1694,11 @@ pub fn ruler_steps(frame_px: f64, base: i64) -> (i64, i64) {
 fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequence, layout: &Layout, t: &Tokens, seq_id: ItemId) {
     let p = ui.painter().clone();
     let rate = seq.settings.frame_rate;
-    let hw = app.ui.timeline.header_w;
+    let hw = effective_header_w(app);
+    // The portrait column is too narrow for the desktop's 30 pt toggle pitch: the six buttons
+    // would run past the ruler's left edge, so they draw at 22 pt on a 24 pt pitch.
+    let touch = app.presentation == Presentation::MobilePortrait;
+    let (btn, pitch) = if touch { (22.0, 24.0) } else { (28.0, 30.0) };
     let ruler = layout.ruler;
     // background of the whole top block
     p.rect_filled(Rect::from_min_max(rect.min, pos2(rect.max.x, ruler.max.y)), 0.0, t.panel_bg);
@@ -1674,7 +1717,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
     }
     app.auto.add("timeline.timecode", tc_rect, &tc);
     // toolbar: 30 × 30 buttons, "on" = #4b4b4b fill
-    let mut x = rect.min.x + 12.0;
+    let mut x = rect.min.x + if touch { 8.0 } else { 12.0 };
     let y = rect.min.y + 26.0;
     let toggles: [(Icon, &str, bool, bool, &str); 6] = [
         (Icon::Nest, "nest", !app.session.state.sequences_as_clips, true, tl!("Insert and overwrite sequences as nests or individual clips")),
@@ -1685,7 +1728,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         (Icon::Wrench, "settings", false, false, tl!("Timeline Display Settings")),
     ];
     for (icon, key, on, toggle, tip) in toggles {
-        let r = Rect::from_min_size(pos2(x, y), vec2(28.0, 28.0));
+        let r = Rect::from_min_size(pos2(x, y), vec2(btn, btn));
         let resp = ui.interact(r, egui::Id::new(("tl-toggle", key)), Sense::click()).on_hover_text(tip);
         app.auto.add(&format!("timeline.toggle.{key}"), r, tip);
         if toggle && on {
@@ -1693,7 +1736,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         } else if resp.hovered() {
             p.rect_filled(r, 4.0, t.hover);
         }
-        icons::paint(&p, r.shrink(7.0), icon, if toggle && on { t.text } else { t.text_dim });
+        icons::paint(&p, r.shrink(if touch { 5.0 } else { 7.0 }), icon, if toggle && on { t.text } else { t.text_dim });
         if resp.clicked() {
             let _ = match key {
                 "nest" => app.session.execute("sequence.nestSequences", json!({})),
@@ -1744,7 +1787,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
                 }
             });
         }
-        x += 30.0;
+        x += pitch;
     }
     // ----- ruler: markers row · labels · ticks · 2 pt render bar
     let clip = p.with_clip_rect(ruler);
