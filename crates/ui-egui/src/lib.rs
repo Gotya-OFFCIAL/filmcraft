@@ -1898,6 +1898,17 @@ impl FilmcraftApp {
         // than any restack at that shape. Everything else draws exactly as before.
         self.presentation = mobile::detect(cfg!(target_os = "android"), full.size());
         mobile::apply_style(&ctx, &t, &mut self.applied_touch_style, self.presentation);
+        // The Timeline long press owns the press-and-hold gesture on touch (docs/mobile-ui.md
+        // principle 3): it fires at 0.5 s and opens the context menus as a bottom sheet. egui's
+        // own touch long-press (InteractionState, at `max_click_duration`, default 0.8 s)
+        // would turn the same hold into a secondary click and pop the desktop right-click
+        // menu instead - so on touch chrome the native conversion is disarmed by making the
+        // threshold unreachable. A held release then still reads as a click, which is fine:
+        // after a fired long press the Timeline ignores the release (app.tl.cancelled), and a
+        // long-held button simply activates.
+        if self.presentation.is_mobile() {
+            ctx.options_mut(|o| o.input_options.max_click_duration = f64::INFINITY);
+        }
         let header_h = if self.ui.show_header { if self.presentation.is_mobile() { 52.0 } else { 38.0 } } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
         if self.ui.show_header {
