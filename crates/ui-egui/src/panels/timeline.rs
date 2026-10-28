@@ -391,9 +391,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let header_w = effective_header_w(app);
     // The portrait chrome keeps a bottom clearance so the master (mix) row never sits flush
     // against the panel's bottom edge / the zoom scroll bar band.
+    // In portrait the desktop toolbar (timecode + toggles) lives in the header column, not
+    // above the ruler, so the content area starts right under the ruler (RULER_H) instead of
+    // the desktop's TOP_H — otherwise a ~14 pt dead strip appears between the ruler and the
+    // first video track.
+    let top_offset = if app.presentation == Presentation::MobilePortrait { RULER_H } else { TOP_H };
     let content =
-        Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + TOP_H), pos2(rect.max.x - SCROLLBAR_H, rect.max.y - SCROLLBAR_H - bottom_pad(app)));
-    let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + TOP_H - RULER_H), pos2(content.max.x, rect.min.y + TOP_H));
+        Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + top_offset), pos2(rect.max.x - SCROLLBAR_H, rect.max.y - SCROLLBAR_H - bottom_pad(app)));
+    let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + top_offset - RULER_H), pos2(content.max.x, rect.min.y + top_offset));
     app.last_timeline_width = content.width();
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, t.panel_bg);
@@ -1717,77 +1722,82 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
     }
     app.auto.add("timeline.timecode", tc_rect, &tc);
     // toolbar: 30 × 30 buttons, "on" = #4b4b4b fill
-    let mut x = rect.min.x + if touch { 8.0 } else { 12.0 };
-    let y = rect.min.y + 26.0;
-    let toggles: [(Icon, &str, bool, bool, &str); 6] = [
-        (Icon::Nest, "nest", !app.session.state.sequences_as_clips, true, tl!("Insert and overwrite sequences as nests or individual clips")),
-        (Icon::Magnet, "snap", app.session.state.snapping, true, tl!("Snap in Timeline (S)")),
-        (Icon::Link, "linked", app.session.state.linked_selection, true, tl!("Linked Selection")),
-        (Icon::Captions, "captions", false, false, tl!("Caption track options")),
-        (Icon::Marker, "marker", false, false, tl!("Add Marker (M)")),
-        (Icon::Wrench, "settings", false, false, tl!("Timeline Display Settings")),
-    ];
-    for (icon, key, on, toggle, tip) in toggles {
-        let r = Rect::from_min_size(pos2(x, y), vec2(btn, btn));
-        let resp = ui.interact(r, egui::Id::new(("tl-toggle", key)), Sense::click()).on_hover_text(tip);
-        app.auto.add(&format!("timeline.toggle.{key}"), r, tip);
-        if toggle && on {
-            p.rect_filled(r, 4.0, t.pressed);
-        } else if resp.hovered() {
-            p.rect_filled(r, 4.0, t.hover);
-        }
-        icons::paint(&p, r.shrink(if touch { 5.0 } else { 7.0 }), icon, if toggle && on { t.text } else { t.text_dim });
-        if resp.clicked() {
-            let _ = match key {
-                "nest" => app.session.execute("sequence.nestSequences", json!({})),
-                "snap" => app.session.execute("sequence.snap", json!({})),
-                "linked" => app.session.execute("sequence.linkedSelection", json!({})),
-                "marker" => app.session.execute("markers.add", json!({})),
-                _ => Ok(Value::Null),
-            };
-        }
-        if key == "settings" {
-            egui::Popup::menu(&resp).show(|ui| {
-                let c = ui.checkbox(&mut app.ui.timeline.show_thumbnails, tl!("Show Video Thumbnails"));
-                app.auto.add("timeline.settings.showThumbnails", c.rect, "Show Video Thumbnails");
-                let on = app.ui.timeline.show_thumbnails;
-                ui.indent("timeline.settings.thumbnails", |ui| {
-                    for (mode, label) in
-                        [(ThumbnailMode::Head, tl!("Head")), (ThumbnailMode::HeadAndTail, tl!("Head and Tail")), (ThumbnailMode::Continuous, tl!("Continuous"))]
-                    {
-                        let r = ui.add_enabled(on, egui::RadioButton::new(app.ui.timeline.thumbnail_mode == mode, label));
-                        app.auto.add(&format!("timeline.settings.thumbnails.{}", mode.name()), r.rect, label);
-                        if r.clicked() {
-                            app.ui.timeline.thumbnail_mode = mode;
+    // In portrait the toolbar lives in the header column (mobile.rs), not above the ruler.
+    if !touch {
+        let mut x = rect.min.x + 12.0;
+        let y = rect.min.y + 26.0;
+        let toggles: [(Icon, &str, bool, bool, &str); 6] = [
+            (Icon::Nest, "nest", !app.session.state.sequences_as_clips, true, tl!("Insert and overwrite sequences as nests or individual clips")),
+            (Icon::Magnet, "snap", app.session.state.snapping, true, tl!("Snap in Timeline (S)")),
+            (Icon::Link, "linked", app.session.state.linked_selection, true, tl!("Linked Selection")),
+            (Icon::Captions, "captions", false, false, tl!("Caption track options")),
+            (Icon::Marker, "marker", false, false, tl!("Add Marker (M)")),
+            (Icon::Wrench, "settings", false, false, tl!("Timeline Display Settings")),
+        ];
+        for (icon, key, on, toggle, tip) in toggles {
+            let r = Rect::from_min_size(pos2(x, y), vec2(btn, btn));
+            let resp = ui.interact(r, egui::Id::new(("tl-toggle", key)), Sense::click()).on_hover_text(tip);
+            app.auto.add(&format!("timeline.toggle.{key}"), r, tip);
+            if toggle && on {
+                p.rect_filled(r, 4.0, t.pressed);
+            } else if resp.hovered() {
+                p.rect_filled(r, 4.0, t.hover);
+            }
+            icons::paint(&p, r.shrink(7.0), icon, if toggle && on { t.text } else { t.text_dim });
+            if resp.clicked() {
+                let _ = match key {
+                    "nest" => app.session.execute("sequence.nestSequences", json!({})),
+                    "snap" => app.session.execute("sequence.snap", json!({})),
+                    "linked" => app.session.execute("sequence.linkedSelection", json!({})),
+                    "marker" => app.session.execute("markers.add", json!({})),
+                    _ => Ok(Value::Null),
+                };
+            }
+            if key == "settings" {
+                egui::Popup::menu(&resp).show(|ui| {
+                    let c = ui.checkbox(&mut app.ui.timeline.show_thumbnails, tl!("Show Video Thumbnails"));
+                    app.auto.add("timeline.settings.showThumbnails", c.rect, "Show Video Thumbnails");
+                    let on = app.ui.timeline.show_thumbnails;
+                    ui.indent("timeline.settings.thumbnails", |ui| {
+                        for (mode, label) in [
+                            (ThumbnailMode::Head, tl!("Head")),
+                            (ThumbnailMode::HeadAndTail, tl!("Head and Tail")),
+                            (ThumbnailMode::Continuous, tl!("Continuous")),
+                        ] {
+                            let r = ui.add_enabled(on, egui::RadioButton::new(app.ui.timeline.thumbnail_mode == mode, label));
+                            app.auto.add(&format!("timeline.settings.thumbnails.{}", mode.name()), r.rect, label);
+                            if r.clicked() {
+                                app.ui.timeline.thumbnail_mode = mode;
+                            }
                         }
+                    });
+                    ui.checkbox(&mut app.ui.timeline.show_waveforms, tl!("Show Audio Waveform"));
+                    ui.separator();
+                    let mut te = app.session.state.show_through_edits;
+                    let c = ui.checkbox(&mut te, tl!("Show Through Edits"));
+                    app.auto.add("timeline.settings.showThroughEdits", c.rect, "Show Through Edits");
+                    if c.changed() {
+                        let _ = app.session.execute("sequence.showThroughEdits", json!({"on": te}));
+                    }
+                    let mut df = app.session.state.show_duplicate_frame_markers;
+                    let c = ui.checkbox(&mut df, tl!("Show Duplicate Frame Markers"));
+                    app.auto.add("timeline.settings.showDuplicateFrameMarkers", c.rect, "Show Duplicate Frame Markers");
+                    if c.changed() {
+                        let _ = app.session.execute("sequence.showDuplicateFrameMarkers", json!({"on": df}));
+                    }
+                    ui.separator();
+                    if ui.button(tl!("Expand All Tracks")).clicked() {
+                        app.ui.timeline.video_track_h = 64.0;
+                        app.ui.timeline.audio_track_h = 64.0;
+                    }
+                    if ui.button(tl!("Minimize All Tracks")).clicked() {
+                        app.ui.timeline.video_track_h = 26.0;
+                        app.ui.timeline.audio_track_h = 26.0;
                     }
                 });
-                ui.checkbox(&mut app.ui.timeline.show_waveforms, tl!("Show Audio Waveform"));
-                ui.separator();
-                let mut te = app.session.state.show_through_edits;
-                let c = ui.checkbox(&mut te, tl!("Show Through Edits"));
-                app.auto.add("timeline.settings.showThroughEdits", c.rect, "Show Through Edits");
-                if c.changed() {
-                    let _ = app.session.execute("sequence.showThroughEdits", json!({"on": te}));
-                }
-                let mut df = app.session.state.show_duplicate_frame_markers;
-                let c = ui.checkbox(&mut df, tl!("Show Duplicate Frame Markers"));
-                app.auto.add("timeline.settings.showDuplicateFrameMarkers", c.rect, "Show Duplicate Frame Markers");
-                if c.changed() {
-                    let _ = app.session.execute("sequence.showDuplicateFrameMarkers", json!({"on": df}));
-                }
-                ui.separator();
-                if ui.button(tl!("Expand All Tracks")).clicked() {
-                    app.ui.timeline.video_track_h = 64.0;
-                    app.ui.timeline.audio_track_h = 64.0;
-                }
-                if ui.button(tl!("Minimize All Tracks")).clicked() {
-                    app.ui.timeline.video_track_h = 26.0;
-                    app.ui.timeline.audio_track_h = 26.0;
-                }
-            });
+            }
+            x += pitch;
         }
-        x += pitch;
     }
     // ----- ruler: markers row · labels · ticks · 2 pt render bar
     let clip = p.with_clip_rect(ruler);

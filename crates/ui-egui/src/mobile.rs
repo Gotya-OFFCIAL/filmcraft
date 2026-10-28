@@ -393,10 +393,32 @@ pub(crate) fn edit(app: &mut crate::FilmcraftApp, ui: &mut Ui, body: Rect) {
     let grip = Rect::from_center_size(handle.center(), Vec2::new(44.0, 4.0));
     ui.painter().rect_filled(grip, 2.0, t.text_faint);
 
+    // Compact title bars for monitor and timeline (desktop has them via dock chrome).
+    const TITLE_H: f32 = 28.0;
     for (panel, rect) in [(crate::dock::PanelKind::Program, monitor), (crate::dock::PanelKind::Timeline, timeline)] {
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(("mobile-panel", panel.id())));
-        child.set_clip_rect(rect.intersect(ui.clip_rect()));
-        crate::panels::show(app, &mut child, panel, rect);
+        // Title bar at the top of the panel rect.
+        let title_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), TITLE_H));
+        ui.painter().rect_filled(title_rect, 0.0, t.panel_bg);
+        // Panel name on the left.
+        let label_pos = Pos2::new(title_rect.min.x + 10.0, title_rect.center().y);
+        ui.painter().text(label_pos, egui::Align2::LEFT_CENTER, crate::i18n::t(panel.title()), Tokens::ui(12.0), t.text);
+        // Hamburger icon on the right (placeholder for panel menu, P5).
+        let icon_size = 16.0;
+        let icon_rect = Rect::from_center_size(Pos2::new(title_rect.max.x - 18.0, title_rect.center().y), Vec2::splat(icon_size));
+        let menu_id = id.with(("panel-menu", panel.id()));
+        let mut menu_open = ui.ctx().data(|d| d.get_temp::<bool>(menu_id)).unwrap_or(false);
+        let icon_color = if menu_open { t.text } else { t.text_dim };
+        crate::icons::paint(ui.painter(), icon_rect, crate::icons::Icon::Hamburger, icon_color);
+        let icon_resp = ui.interact(icon_rect, menu_id.with("btn"), Sense::click());
+        if icon_resp.clicked() {
+            menu_open = !menu_open;
+            ui.ctx().data_mut(|d| d.insert_temp(menu_id, menu_open));
+        }
+        // Content rect below the title bar.
+        let content_rect = Rect::from_min_max(Pos2::new(rect.min.x, rect.min.y + TITLE_H), rect.max);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content_rect).id_salt(("mobile-panel", panel.id())));
+        child.set_clip_rect(content_rect.intersect(ui.clip_rect()));
+        crate::panels::show(app, &mut child, panel, content_rect);
     }
     tool_dock(app, ui, dock);
 }
