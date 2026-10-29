@@ -357,6 +357,16 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
         {
             app.hooks.run_dialog = Some(Box::new(run_dialog_off_thread));
         }
+        // Android: no native picker without the Storage Access Framework (docs/mobile-ui.md,
+        // phase 5), and this shell carries no Java for it. The app draws its own browser and
+        // answers on the same channel a non-blocking host uses, so every pick the desktop makes
+        // works here too — with the reach scoped storage allows.
+        #[cfg(target_os = "android")]
+        {
+            let ctx = cc.egui_ctx.clone();
+            app.hooks.run_dialog =
+                Some(Box::new(move |dialog: filmcraft_ui_egui::native_dialogs::FileDialog| filmcraft_ui_egui::panels::file_browser::open(&ctx, &dialog)));
+        }
         app.hooks.open_path = Some(Box::new(open_path));
         // Help menu, About and Discord links (#642): eframe is built without its `links`
         // feature, so `ctx.open_url` does nothing on the desktop. Detached, so a launcher

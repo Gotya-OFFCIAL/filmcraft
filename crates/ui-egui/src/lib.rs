@@ -1930,6 +1930,9 @@ impl FilmcraftApp {
         // the Timeline has had its chance to place a file drop this frame; anything left stays a bin import
         self.pending_timeline_drop = None;
         panels::dialogs::show(self, &ctx);
+        // The in-app browser (Android: no native dialog without the Storage Access Framework).
+        // Drawn after the panels so it covers them, and it answers the pending dialog directly.
+        panels::file_browser::show(self, &ctx);
         if !self.ui.show_status_bar {
             // no bar to draw the job in, but a finished preview render still plays
             self.watch_jobs(ui.ctx());
