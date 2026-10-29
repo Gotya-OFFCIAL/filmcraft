@@ -180,10 +180,17 @@ pub fn run_desktop() -> eframe::Result {
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
     // First, so the panic hook and every start-up record are logged (`logging`).
     let logger = logging::install();
-    let launch = match args::parse(None, std::env::args_os().skip(1)) {
+    let mut launch = match args::parse(None, std::env::args_os().skip(1)) {
         Ok(Cli::Run(l)) => l,
         _ => std::process::exit(2),
     };
+    // Scoped storage leaves an app one directory it may always write: the internal one
+    // `internal_data_path` names (`/data/data/<pkg>/files`). It becomes the data root for the log
+    // file, crash records and auto-save; `--data-dir` stays honoured, and `default_data_dir`
+    // (the desktop per-user directory) remains the last resort.
+    if launch.data_dir.is_none() {
+        launch.data_dir = app.internal_data_path();
+    }
     let data_root = launch.data_dir.clone().or_else(default_data_dir);
     let log_dir = data_root.as_ref().map(|d| d.join(logging::LOG_DIR));
     log::info!("FilmCraft {} (android {} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
