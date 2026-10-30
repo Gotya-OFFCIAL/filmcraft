@@ -1703,6 +1703,7 @@ dependencies = [
  "filmcraft-time",
  "filmcraft-ui-egui",
  "glob",
+ "jni 0.21.1",
  "log",
  "muda",
  "objc2 0.6.4",

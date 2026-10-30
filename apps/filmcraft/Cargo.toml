@@ -81,6 +81,11 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
 # The AndroidApp handed to android_main (same winit as eframe).
 winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
+# JNI for the IME bridge (packaging/android/java/ImeBridge.java): register its natives and
+# drive the hidden EditText that owns the soft keyboard's InputConnection (src/ime.rs).
+# 0.21 on purpose: android-activity's own 0.22 has a redesigned Env API; the C ABI is shared,
+# and 0.21's classic JNIEnv/NativeMethod shape is the one this bridge is written against.
+jni = "0.21.1"
 
 [dev-dependencies]
 glob = "0.3"

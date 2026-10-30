@@ -33,13 +33,23 @@ mkdir -p "$WORK"
 "$BT/aapt2.exe" link -o "$WORK/base.apk" -I "$PLATFORM_JAR" --manifest "$REPO/packaging/android/AndroidManifest.xml" \
   --min-sdk-version 26 --target-sdk-version 35 --version-code 1 --version-name 0.12.0 "$WORK/res.zip"
 
-# 2. Assemble: only the .so goes into the apk (no dex: hasCode=false, NativeActivity is a
-#    framework class). Stored uncompressed for direct mapping; zipalign fixes offsets before
-#    signing. 7-Zip appends the entry to the aapt2-linked apk without rebuilding the others.
+# 1b. The IME bridge (packaging/android/java): a hidden EditText that owns the IME's
+#     InputConnection, compiled to classes.dex with javac + d8 (no Gradle needed).
+#     NativeActivity stays the activity (a framework class); the dex carries only the bridge.
+rm -rf "$WORK/classes" && mkdir -p "$WORK/classes"
+"$JDK/bin/javac" -encoding UTF-8 -classpath "$PLATFORM_JAR" -d "$WORK/classes" \
+  "$REPO"/packaging/android/java/ai/storyteller/filmcraft/*.java
+"$BT/d8.bat" --lib "$PLATFORM_JAR" --output "$WORK" "$WORK"/classes/ai/storyteller/filmcraft/*.class
+[ -f "$WORK/classes.dex" ] || { echo "d8 produced no classes.dex"; exit 1; }
+
+# 2. Assemble: the .so (stored uncompressed for direct mapping) and classes.dex go into
+#    the apk; zipalign fixes offsets before signing. 7-Zip appends entries to the
+#    aapt2-linked apk without rebuilding the others.
 mkdir -p "$BUILD/lib/arm64-v8a"
 cp "$SO" "$BUILD/lib/arm64-v8a/libfilmcraft.so"
 SEVENZIP="${SEVENZIP:-/d/NET/MuMuPlayer/nx_main/7za.exe}"
 (cd "$BUILD" && "$SEVENZIP" a -tzip "$WORK/base.apk" "lib/arm64-v8a/libfilmcraft.so" > /dev/null)
+(cd "$WORK" && "$SEVENZIP" a -tzip base.apk classes.dex > /dev/null)
 
 # 3. Align, then sign with the debug key (generated once into the work dir).
 KS="$WORK/debug.keystore"

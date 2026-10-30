@@ -33,6 +33,7 @@ mod control_server;
 mod dev_icon;
 mod file_filters;
 mod graphics;
+mod ime;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -206,6 +207,12 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     }
     filmcraft_ui_egui::crash::install(log_dir);
     register_hardware_decoders();
+    // The IME bridge (src/ime.rs): a hidden EditText owns the soft keyboard's
+    // InputConnection and feeds typed text back through JNI. Without it Android has no
+    // text entry at all (winit shows the keyboard but delivers no Ime events).
+    if let Err(e) = ime::install(&app) {
+        log::warn!("ime bridge unavailable: {e}");
+    }
     let mut options = native_options(false);
     options.android_app = Some(app);
     let result = eframe::run_native(
@@ -259,6 +266,10 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
                 }
             }),
         );
+        // IME text from the hidden EditText (Android only): injected as egui input at the
+        // top of the pass, before any widget reads it (src/ime.rs).
+        #[cfg(target_os = "android")]
+        cc.egui_ctx.on_begin_pass("ime", Arc::new(move |ctx| ime::pump(ctx)));
         let mut session = Session::default();
         if let Some(dir) = data_dir.clone().or_else(default_data_dir) {
             let mut cfg = AutosaveConfig::new(dir);
