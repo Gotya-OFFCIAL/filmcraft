@@ -236,7 +236,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) -> Option<Vec<String>> 
                     go_up = st.dir.parent().map(Path::to_path_buf);
                 }
                 let writable_here = writable(&st.dir);
-                let mark = if writable_here { "" } else { "  (read only)" };
+                let mark = if writable_here { String::new() } else { format!("  {}", tl!("(read only)")) };
                 ui.label(RichText::new(format!("{}{}", st.dir.display(), mark)).size(11.0).color(t.text_dim));
             });
             if let Some(up) = go_up {
