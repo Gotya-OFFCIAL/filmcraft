@@ -37,6 +37,9 @@ mod ime;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+// Platform picks/shares; the JNI half of the module is cfg(target_os = "android") so the
+// MIME-mapping tests run on the host too.
+mod platform;
 mod window_raise;
 
 use args::{Cli, Launch};
@@ -213,6 +216,11 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     if let Err(e) = ime::install(&app) {
         log::warn!("ime bridge unavailable: {e}");
     }
+    // The platform bridge (src/platform.rs): the system document picker and the
+    // share/player Intents behind the export-complete panel.
+    if let Err(e) = platform::install(&app) {
+        log::warn!("platform bridge unavailable: {e}");
+    }
     let mut options = native_options(false);
     options.android_app = Some(app);
     let result = eframe::run_native(
@@ -375,15 +383,24 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
         {
             app.hooks.run_dialog = Some(Box::new(run_dialog_off_thread));
         }
-        // Android: no native picker without the Storage Access Framework (docs/mobile-ui.md,
-        // phase 5), and this shell carries no Java for it. The app draws its own browser and
-        // answers on the same channel a non-blocking host uses, so every pick the desktop makes
-        // works here too — with the reach scoped storage allows.
+        // Android: opens go through the system document picker (the Storage Access
+        // Framework, docs/mobile-ui.md phase 5) — the platform's own browser beats anything
+        // app-drawn and every document provider appears in it. The picked content:// paths
+        // are copied to the cache by PlatformBridge and answered as real paths on the same
+        // channel a non-blocking host uses. Save and folder picks stay with the in-app
+        // browser: they name paths the app itself writes.
         #[cfg(target_os = "android")]
         {
+            use filmcraft_ui_egui::native_dialogs::FileDialog;
             let ctx = cc.egui_ctx.clone();
-            app.hooks.run_dialog =
-                Some(Box::new(move |dialog: filmcraft_ui_egui::native_dialogs::FileDialog| filmcraft_ui_egui::panels::file_browser::open(&ctx, &dialog)));
+            app.hooks.run_dialog = Some(Box::new(move |dialog: FileDialog| match &dialog {
+                FileDialog::OpenFiles { exts } => platform::pick_files(true, exts),
+                FileDialog::OpenFile { exts, .. } | FileDialog::Relink { exts, .. } => platform::pick_files(false, exts),
+                FileDialog::OpenProject => platform::pick_files(false, &["fcproj".to_string()]),
+                _ => filmcraft_ui_egui::panels::file_browser::open(&ctx, &dialog),
+            }));
+            app.hooks.preview_path = Some(Box::new(|path: &str| platform::preview(path)));
+            app.hooks.share_path = Some(Box::new(|path: &str| platform::share(path)));
         }
         app.hooks.open_path = Some(Box::new(open_path));
         // Help menu, About and Discord links (#642): eframe is built without its `links`

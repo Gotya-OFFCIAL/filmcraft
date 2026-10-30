@@ -369,8 +369,20 @@ pub fn range_param(s: &Session, project: &Project, seq: ItemId, v: Option<&Value
 }
 
 /// Where exports go when no path is given: next to the saved project, else ~/Movies, else the
-/// home directory, else the temporary directory.
+/// home directory, else the temporary directory. On Android the shared Download folder comes
+/// first — that is where a phone user expects exports (visible in the system Files app), and
+/// the project directory is wherever the picker put it.
 pub fn default_export_dir(s: &Session) -> PathBuf {
+    if cfg!(target_os = "android") {
+        let shared = Path::new("/sdcard/Download/FilmCraft");
+        if std::fs::create_dir_all(shared).is_ok() {
+            return shared.to_path_buf();
+        }
+        let own = Path::new("/sdcard/Android/data/ai.storyteller.filmcraft/files/exports");
+        if std::fs::create_dir_all(own).is_ok() {
+            return own.to_path_buf();
+        }
+    }
     if let Some(d) = s.path.as_deref().and_then(|p| Path::new(p).parent()).filter(|d| !d.as_os_str().is_empty()) {
         return d.to_path_buf();
     }

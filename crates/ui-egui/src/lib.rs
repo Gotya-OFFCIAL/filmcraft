@@ -163,6 +163,12 @@ pub struct HostHooks {
     /// running while the dialog is open (the desktop app on Linux, #260); without it the
     /// synchronous pickers above are used.
     pub run_dialog: Option<Box<dyn FnMut(native_dialogs::FileDialog) -> Receiver<Vec<String>>>>,
+    /// Preview an exported file in the system player (Android: ACTION_VIEW on a MediaStore
+    /// uri). Without it the export-complete panel shows no Preview button.
+    pub preview_path: Option<Box<dyn FnMut(&str)>>,
+    /// Share an exported file through the system share sheet (Android: ACTION_SEND). Without
+    /// it the export-complete panel shows no Share button.
+    pub share_path: Option<Box<dyn FnMut(&str)>>,
     /// Open a URL in the system browser (Help menu links, About dialog, Discord button, Import
     /// screen). Without it, or when it fails, links go through `egui::Context::open_url`, which
     /// opens a new tab on the web (the native egui backend is built without its `links` feature).
@@ -393,6 +399,11 @@ pub struct FilmcraftApp {
     pub gpu: Option<GpuState>,
     /// Preview render job being watched (job id, where to start playing when it completes).
     watched_render: Option<(u64, Tick)>,
+    /// Export job being watched (job id), to open the complete panel when it finishes.
+    watched_export: Option<u64>,
+    /// A finished export's path: the complete panel (preview / share / close) stays open
+    /// while set.
+    export_done: Option<String>,
     /// Jobs whose completion waker thread is already running ([`Self::arm_job_waker`]).
     job_wakers: std::collections::HashSet<u64>,
     /// Settings last applied to the UI (theme, tooltips, frame cache, audio device).
@@ -625,6 +636,8 @@ impl FilmcraftApp {
             stale_clipboard_media: None,
             gpu: None,
             watched_render: None,
+            watched_export: None,
+            export_done: None,
             job_wakers: Default::default(),
             applied_prefs: None,
             applied_ui_scale: None,
@@ -1936,6 +1949,7 @@ impl FilmcraftApp {
         // The in-app browser (Android: no native dialog without the Storage Access Framework).
         // Drawn after the panels so it covers them, and it answers the pending dialog directly.
         panels::file_browser::show(self, &ctx);
+        self.export_done_panel(&ctx);
         if !self.ui.show_status_bar {
             // no bar to draw the job in, but a finished preview render still plays
             self.watch_jobs(ui.ctx());
@@ -1980,6 +1994,25 @@ impl FilmcraftApp {
                 self.play(1.0);
             }
         }
+        // An export that just finished opens the complete panel (path, preview, share).
+        // `finished` flips inside the exporter slightly before the worker publishes its
+        // result, and the job waker's closing repaint can land exactly in between: keep
+        // watching until the result is there instead of dropping the job on the first look.
+        if let Some(id) = self.watched_export
+            && let Some(j) = self.session.jobs.iter().find(|j| j.id == id)
+            && j.progress.finished.load(Ordering::Relaxed)
+        {
+            let result = j.result.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            match result {
+                Some(Ok(report)) => {
+                    self.watched_export = None;
+                    log::info!("export done: {}", report.path);
+                    self.export_done = Some(report.path.clone());
+                }
+                Some(Err(_)) => self.watched_export = None,
+                None => {}
+            }
+        }
         let Some(job) = running else {
             self.job_wakers.clear();
             return None;
@@ -1987,6 +2020,12 @@ impl FilmcraftApp {
         if job.label.starts_with("Rendering ") && !job.label.contains("audio") && self.watched_render.is_none_or(|w| w.0 != job.id) {
             let from = self.session.active_sequence().and_then(|q| q.mark_in).unwrap_or(Tick::ZERO);
             self.watched_render = Some((job.id, from));
+        }
+        if job.label.starts_with("Export ") || job.label.starts_with("Quick Export ") || job.label.starts_with("Queue: ") {
+            if self.watched_export != Some(job.id) {
+                log::info!("export watch: {}", job.label);
+            }
+            self.watched_export = Some(job.id);
         }
         self.arm_job_waker(ctx, &job);
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
@@ -2014,6 +2053,46 @@ impl FilmcraftApp {
         });
         if spawned.is_err() {
             self.job_wakers.remove(&job.id);
+        }
+    }
+
+    /// The export-complete panel: where the file landed plus Preview/Share when the host
+    /// provides them (Android: the system player and the share sheet). Opened by
+    /// [`Self::watch_jobs`] when an export job finishes.
+    fn export_done_panel(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.export_done.clone() else { return };
+        let t = self.tokens;
+        let mut close = false;
+        let mut preview = false;
+        let mut share = false;
+        egui::Window::new(tl!("Export complete"))
+            .id(egui::Id::new("export-done"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new(tl!("Saved to")).size(12.0).color(t.text_dim));
+                ui.label(egui::RichText::new(&path).size(12.0));
+                ui.horizontal(|ui| {
+                    if self.hooks.preview_path.is_some() && ui.button(tl!("Preview")).clicked() {
+                        preview = true;
+                    }
+                    if self.hooks.share_path.is_some() && ui.button(tl!("Share")).clicked() {
+                        share = true;
+                    }
+                    if ui.button(tl!("Close")).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if preview && let Some(f) = self.hooks.preview_path.as_mut() {
+            f(&path);
+        }
+        if share && let Some(f) = self.hooks.share_path.as_mut() {
+            f(&path);
+        }
+        if close {
+            self.export_done = None;
         }
     }
 
