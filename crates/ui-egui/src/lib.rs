@@ -393,6 +393,8 @@ pub struct FilmcraftApp {
     pub gpu: Option<GpuState>,
     /// Preview render job being watched (job id, where to start playing when it completes).
     watched_render: Option<(u64, Tick)>,
+    /// Jobs whose completion waker thread is already running ([`Self::arm_job_waker`]).
+    job_wakers: std::collections::HashSet<u64>,
     /// Settings last applied to the UI (theme, tooltips, frame cache, audio device).
     applied_prefs: Option<filmcraft_engine::autosave::Preferences>,
     /// Settings ▸ Appearance ▸ UI Scale last applied, with the system scale it was applied for.
@@ -623,6 +625,7 @@ impl FilmcraftApp {
             stale_clipboard_media: None,
             gpu: None,
             watched_render: None,
+            job_wakers: Default::default(),
             applied_prefs: None,
             applied_ui_scale: None,
             presentation: state::Presentation::default(),
@@ -1977,13 +1980,41 @@ impl FilmcraftApp {
                 self.play(1.0);
             }
         }
-        let job = running?;
+        let Some(job) = running else {
+            self.job_wakers.clear();
+            return None;
+        };
         if job.label.starts_with("Rendering ") && !job.label.contains("audio") && self.watched_render.is_none_or(|w| w.0 != job.id) {
             let from = self.session.active_sequence().and_then(|q| q.mark_in).unwrap_or(Tick::ZERO);
             self.watched_render = Some((job.id, from));
         }
+        self.arm_job_waker(ctx, &job);
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
         Some(job)
+    }
+
+    /// Wake the UI from a thread while `job` runs. `request_repaint_after` deadlines are lost
+    /// sometimes (an idle event loop that misses its timeout never redraws), and a job that
+    /// finishes into a sleeping loop leaves the last progress bar on screen until the next input
+    /// event — an export that completed looked stuck at its old percentage. The waker repaints on
+    /// a 250 ms tick and once more when `finished` flips, so both the progress and the completion
+    /// reach the screen without user input.
+    fn arm_job_waker(&mut self, ctx: &egui::Context, job: &filmcraft_engine::Job) {
+        use std::sync::atomic::Ordering;
+        if !self.job_wakers.insert(job.id) {
+            return;
+        }
+        let (ctx, progress) = (ctx.clone(), std::sync::Arc::clone(&job.progress));
+        let spawned = std::thread::Builder::new().name("filmcraft-jobwake".into()).spawn(move || {
+            while !progress.finished.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                ctx.request_repaint();
+            }
+            ctx.request_repaint();
+        });
+        if spawned.is_err() {
+            self.job_wakers.remove(&job.id);
+        }
     }
 
     /// Right side of the status bar: the running job (export / render previews) with a progress
